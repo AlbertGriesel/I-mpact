@@ -1,0 +1,10 @@
+# I/mpact design language: light blue, green, white, soft grey (spec §3)
+[theme]
+primaryColor = "#2E9E63"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F4F7F6"
+textColor = "#22423A"
+font = "sans serif"
+
+[browser]
+gatherUsageStats = false

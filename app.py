@@ -1,148 +1,145 @@
 """
-AI Environmental Impact Tracker — Data Collection Form (multi-step wizard)
+I/mpact — AI Environmental Impact Tracker
+=========================================
 
-This app ONLY collects user input and stores it in a Python dictionary
-called `user_data`. It performs no calculations and includes no charts,
-AI features, or dashboards.
+A friendly, AI-powered platform for measuring, understanding, planning and
+reducing personal environmental impact, built for South African and broader
+African households.
 
-Each category lives in its own module (water.py, electricity.py,
-transport.py, lifestyle.py). Every module renders its own screen and
-returns a dictionary; app.py combines them into user_data.
+    streamlit run app.py
 
-The user moves horizontally from section to section using the
-Back / Next buttons. All answers are kept in st.session_state so
-nothing is lost when switching screens.
+Architecture (per the project specification):
+  * schema.py + calculations.py — ONE schema and ONE deterministic engine
+    shared by the guided questionnaire and the AI conversation.
+  * ai.py — a pluggable LLM layer (free Gemini tier or Anthropic) powers
+    conversational collection, bill image extraction, the automatic dashboard
+    evaluation and the floating assistant; it never performs the arithmetic.
+  * database.py — accounts, history, goals, achievements, streaks, stories.
+  * visuals.py — the reactive daisy-on-Earth mascot, wallpaper, icon set and
+    browser enhancements, embedded as web components.
 """
 
 import streamlit as st
 
-import water
-import electricity
-import transport
-import lifestyle
+import ai
+import database as db
+from views import (home, account, assessment, chat_assessment, dashboard,
+                   information, profile, community, settings, assistant)
+from views.common import latest_score
+from visuals import inject_theme, enhance_ui, scroll_top, user_chip
 
-st.set_page_config(page_title="Environmental Impact Tracker — Data Collection", layout="centered")
+st.set_page_config(
+    page_title="I/mpact — Environmental Impact Tracker",
+    page_icon="🌍",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
-# Order of the wizard screens.
-STEPS = ["General", "Water", "Electricity", "Transport", "Lifestyle", "Review"]
+# ---------------------------------------------------------------- bootstrap
+db.init_db()
+if "demo_seeded" not in st.session_state:
+    db.seed_demo_data()
+    st.session_state["demo_seeded"] = True
 
-
-def default_general():
-    """The initial, empty general-information dictionary."""
-    return {
-        "household_size": 1,
-        "country": "South Africa",
-        "region": "",
-        "municipality": "",
-    }
-
-
-def render_general(data):
-    """Render the general screen pre-filled with `data` and return the
-    updated general dictionary."""
-    st.header("General Information")
-    household_size = st.number_input(
-        "Household size (number of people)", min_value=1,
-        value=int(data["household_size"]), step=1
-    )
-    country = st.text_input("Country", value=data["country"])
-    region = st.text_input("Province, state, or region (optional)", value=data["region"])
-    municipality = st.text_input(
-        "Municipality or local utility (optional)", value=data["municipality"]
-    )
-    return {
-        "household_size": household_size,
-        "country": country,
-        "region": region,
-        "municipality": municipality,
-    }
+# Re-validate the session user each run: picks up settings changes and drops
+# sessions whose account no longer exists.
+user = st.session_state.get("user")
+if user:
+    user = db.get_user(user["id"])
+    if user is None:
+        st.session_state.pop("user", None)
+    else:
+        st.session_state["user"] = user
+if user:
+    score = latest_score(user["id"])
+elif st.session_state.get("guest_results"):
+    # guests get the same reactive theme from their session-held results
+    score = st.session_state["guest_results"]["score"]["total"]
+else:
+    score = None
+inject_theme(score)
 
 
-# ---------------------------------------------------------------------------
-# Persistent state: user_data holds every answer; step is the current screen.
-# ---------------------------------------------------------------------------
-def default_user_data():
-    return {
-        "general": default_general(),
-        "water": water.default_data(),
-        "electricity": electricity.default_data(),
-        "transport": transport.default_data(),
-        "lifestyle": lifestyle.default_data(),
-    }
+def _goals_page():
+    """Goals is a real navigation destination (stays highlighted in the
+    sidebar); its content is the Dashboard's plan section, reached via the
+    stable 'plan' anchor. The scroll flag is set on arrival in the sidebar
+    page-change handler below, so in-page interactions don't re-scroll."""
+    dashboard.render()
 
 
-if "user_data" not in st.session_state:
-    st.session_state.user_data = default_user_data()
-if "step" not in st.session_state:
-    st.session_state.step = 0
+# -------------------------------------------------------------- page graph
+pages = {
+    "home": st.Page(home.render, title="Home", icon=":material/home:",
+                    url_path="home", default=True),
+    "account": st.Page(account.render, title="Sign in / Sign up",
+                       icon=":material/person:", url_path="account"),
+    "assessment": st.Page(assessment.render, title="Assessment",
+                          icon=":material/edit_note:", url_path="assessment"),
+    "chat": st.Page(chat_assessment.render, title="Chat Assessment",
+                    icon=":material/forum:", url_path="chat"),
+    "dashboard": st.Page(dashboard.render, title="Dashboard",
+                         icon=":material/dashboard:", url_path="dashboard"),
+    "goals": st.Page(_goals_page, title="Goals",
+                     icon=":material/target:", url_path="goals"),
+    "community": st.Page(community.render_leaderboard, title="Leaderboard",
+                         icon=":material/social_leaderboard:",
+                         url_path="community"),
+    "explore": st.Page(community.render_explore, title="Explore",
+                       icon=":material/travel_explore:", url_path="explore"),
+    "information": st.Page(information.render, title="Information",
+                           icon=":material/menu_book:", url_path="information"),
+    "profile": st.Page(profile.render, title="Profile",
+                       icon=":material/account_circle:", url_path="profile"),
+    "settings": st.Page(settings.render, title="Settings",
+                        icon=":material/settings:", url_path="settings"),
+}
+st.session_state["pages"] = pages
 
-user_data = st.session_state.user_data
+nav = st.navigation({
+    "Start": [pages["home"], pages["account"]],
+    "Measure": [pages["assessment"], pages["chat"]],
+    "Improve": [pages["dashboard"], pages["goals"]],
+    "Community": [pages["community"], pages["explore"]],
+    "More": [pages["information"], pages["profile"], pages["settings"]],
+})
 
+# ----------------------------------------------------------------- sidebar
+with st.sidebar:
+    st.markdown("<div class='wordmark'>I/mpact</div>", unsafe_allow_html=True)
+    st.caption("Measure · Understand · Improve")
+    if ai.assistant_ready():
+        st.caption("● Assistant ready")
+    else:
+        st.caption("○ Assistant offline")
+        st.page_link(pages["settings"], label="Connect AI",
+                     icon=":material/key:")
 
-# ---------------------------------------------------------------------------
-# Horizontal stepper across the top.
-# ---------------------------------------------------------------------------
-def render_progress():
-    cols = st.columns(len(STEPS))
-    for i, (col, label) in enumerate(zip(cols, STEPS)):
-        with col:
-            if i == st.session_state.step:
-                st.markdown(f"**🔵 {label}**")
-            elif i < st.session_state.step:
-                st.markdown(f"✅ {label}")
-            else:
-                st.markdown(f"⚪ {label}")
-    st.progress(st.session_state.step / (len(STEPS) - 1))
+    # browser enhancements: hold-to-repeat steppers, select-all on focus,
+    # searchable long dropdowns / locked short ones. Runs once per page load.
+    enhance_ui()
 
+    # scroll to top on page change or wizard step change — unless a jump to
+    # the Goals anchor is pending (it would fight the anchor scroll)
+    if st.session_state.get("_last_page") != nav.title:
+        st.session_state["_last_page"] = nav.title
+        st.session_state["_scroll_top"] = True
+        # arriving on Goals: jump to the plan anchor exactly once
+        if nav.title == "Goals":
+            st.session_state["scroll_to_goals"] = True
+        # the post-sign-up confirmation only lives on the account page
+        if nav.title != "Sign in / Sign up":
+            st.session_state.pop("just_signed_up", None)
+            st.session_state.pop("guest_adopted", None)
+    if st.session_state.pop("_scroll_top", False) and \
+            not st.session_state.get("scroll_to_goals"):
+        scroll_top()
 
-# ---------------------------------------------------------------------------
-# Back / Next navigation.
-# ---------------------------------------------------------------------------
-def render_nav():
-    st.divider()
-    left, _, right = st.columns([1, 2, 1])
-    with left:
-        if st.session_state.step > 0:
-            if st.button("← Back", use_container_width=True):
-                st.session_state.step -= 1
-                st.rerun()
-    with right:
-        if st.session_state.step < len(STEPS) - 1:
-            if st.button("Next →", use_container_width=True, type="primary"):
-                st.session_state.step += 1
-                st.rerun()
+# ------------------------------------------------- top-right user chip (§17)
+if user:
+    user_chip(user, score)
 
+nav.run()
 
-# ---------------------------------------------------------------------------
-# Page layout.
-# ---------------------------------------------------------------------------
-st.title("🌍 Environmental Impact Tracker")
-st.caption("Data collection only. No calculations are performed on this page.")
-
-render_progress()
-st.divider()
-
-# Each section module renders its screen and returns its dictionary;
-# the result is combined into user_data.
-current = STEPS[st.session_state.step]
-if current == "General":
-    user_data["general"] = render_general(user_data["general"])
-elif current == "Water":
-    user_data["water"] = water.render(user_data["water"])
-elif current == "Electricity":
-    user_data["electricity"] = electricity.render(user_data["electricity"])
-elif current == "Transport":
-    user_data["transport"] = transport.render(user_data["transport"])
-elif current == "Lifestyle":
-    user_data["lifestyle"] = lifestyle.render(user_data["lifestyle"])
-elif current == "Review":
-    st.header("✅ Review")
-    st.write("You have reached the end of the questionnaire. All collected data is stored below.")
-    st.subheader("Collected data (user_data)")
-    st.json(user_data)
-    if st.button("Start over"):
-        st.session_state.user_data = default_user_data()
-        st.session_state.step = 0
-        st.rerun()
-
-render_nav()
+# ---------------------------------------------- floating assistant FAB (§18)
+assistant.render_floating(user)

@@ -1,0 +1,20 @@
+warning: in the working copy of '.claude/launch.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of '.gitignore', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'README.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'app.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'calculations.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'electricity.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'lifestyle.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'transport.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'water.py', LF will be replaced by CRLF the next time Git touches it
+ .claude/launch.json                               |   5 [32m+[m[31m-[m
+ .gitignore                                        |   1 [32m+[m
+ AI Environmental Impact Tracker Specification.pdf | Bin [31m46443[m -> [32m255475[m bytes
+ README.md                                         |  93 [32m+++[m[31m-[m
+ app.py                                            | 283 [32m++++++[m[31m------[m
+ calculations.py                                   | 528 [32m+++++++++++++++++++++[m[31m-[m
+ electricity.py                                    | 428 [32m+++++++++++++[m[31m-----[m
+ lifestyle.py                                      | 179 [32m+++++[m[31m---[m
+ transport.py                                      | 249 [32m++++++[m[31m----[m
+ water.py                                          | 286 [32m+++++++++[m[31m---[m
+ 10 files changed, 1549 insertions(+), 503 deletions(-)

@@ -1,0 +1,589 @@
+--- page 1 ---
+AI Environmental Impact Tracker - Product Specification
+Working title: Sprout / I/mpact   |   Page 1
+PROJECT SPECIFICATION
+AI Environmental Impact Tracker
+Working app name: Sprout or I/mpact
+A friendly, AI-powered platform for measuring, understanding, planning, and 
+reducing personal environmental impact.
+Core promise
+Make environmental impact understandable and actionable. Ask only for information that 
+meaningfully improves accuracy, use measured data whenever possible, and help users turn their 
+results into realistic weekly action.
+Primary metrics: net water consumption, net electricity consumption, and net carbon footprint (CO2e).
+--- page 2 ---
+AI Environmental Impact Tracker - Product Specification
+Working title: Sprout / I/mpact   |   Page 2
+1. Overview
+The goal of this project is to build an AI-powered environmental impact tracker that enables 
+anyone to calculate, understand, compare, plan, and reduce their personal environmental 
+footprint.
+The application should be free, easy to use, optimistic, and designed for the general public, with a 
+particular focus on South African and broader African households. A user with no environmental 
+knowledge should be able to complete an assessment in less than 10 minutes while still receiving a 
+realistic estimate of their impact.
+The application should reflect local realities such as municipal utilities, prepaid meters, 
+loadshedding, backup generators, solar inverters, mixed household energy sources, and regional 
+differences across South Africa and Africa.
+The application measures three primary environmental metrics:
+ Net water consumption
+ Net electricity consumption
+ Net carbon footprint (CO2e)
+The objective is not only to calculate a footprint. The application should educate users, show where 
+their impact comes from, make the results relatable, track progress over time, create a sense of 
+community, and provide practical AI-guided support for improvement.
+2. Core Principles
+2.1 Simplicity and meaningful inputs
+Users should answer as few questions as possible. Every input must pass a relevance test:
+ Ask the question only if the answer significantly improves the accuracy of the calculation, 
+changes the recommendation, or is required for a core feature.
+ Do not ask for information that can reasonably be inferred, calculated, looked up from an 
+approved dataset, or extracted from an uploaded bill.
+ Use progressive disclosure: estimation questions should only appear when measured data is 
+unavailable.
+ Avoid duplicated inputs across water, electricity, and carbon sections when one answer can be 
+reused.
+2.2 Accuracy
+Whenever possible, calculations should be based on measured data instead of estimates.
+ Utility bills, meter statements, prepaid records, and direct consumption values are preferred 
+over behavioural estimates.
+ Vehicle databases are preferred over asking users to know fuel efficiency.
+ Airport databases should be used to calculate flight distance instead of asking users to estimate 
+it.
+--- page 3 ---
+AI Environmental Impact Tracker - Product Specification
+Working title: Sprout / I/mpact   |   Page 3
+ Regional electricity, water, and emissions datasets should be used where trustworthy local data 
+is available.
+ If data is missing, use trustworthy sources such as government agencies, utilities, universities, 
+research institutions, and established scientific datasets.
+2.3 Accessibility
+The application should be suitable for people with little environmental knowledge. Questions and 
+explanations should use simple language, and unfamiliar concepts should include short, optional 
+explanations.
+2.4 Transparency
+Users should understand how their footprint was calculated, which inputs were measured or 
+estimated, and which activities contribute most to their impact. The application should not present 
+uncertain estimates as exact facts.
+2.5 Optimism and agency
+The tone should be friendly, practical, and encouraging without hiding poor performance. The 
+product should make clear that individual action is not the only solution to environmental 
+problems, but that personal choices can still reduce resource use, save money, influence 
+households and communities, and contribute to broader changes in demand and norms.
+3. Product Identity and Design Language
+The final product name is undecided. The two current options are:
+ Sprout - friendly, organic, simple, and growth-oriented.
+ I/mpact - modern and reflective, emphasizing both personal impact and the possibility of 
+change.
+The interface should use a consistent visual language:
+ Primary palette: light blue, green, white, and soft grey.
+ Friendly rounded cards, clear spacing, approachable illustrations, and simple iconography.
+ A fun and lightly playful design without making the scientific results feel childish.
+ Optimistic microcopy and progress feedback. Avoid guilt-heavy or fear-based messaging.
+ Nature-inspired motion and visuals that react to the user's current impact score.
+4. Overall User Journey
+1. Open the app and understand its purpose from the home page.
+2. Create an account or sign in.
+3. Choose account privacy: public or private.
+4. Choose an assessment method: guided questionnaire or AI conversation.
+5. Provide measured environmental data, upload bills, or answer fallback estimation questions.
+6. Calculate water, electricity, and carbon metrics using a deterministic calculation engine.
+7. View the feedback dashboard with KPIs, graphs, comparisons, explanations, and weekly goals.
+--- page 4 ---
+AI Environmental Impact Tracker - Product Specification
+Working title: Sprout / I/mpact   |   Page 4
+8. Use the AI planning assistant to discuss practical ways to improve.
+9. Save results to the user history and update usage patterns weekly or monthly.
+10. Build streaks, complete goals, unlock achievements, and optionally participate in public 
+profiles, stories, and rankings.
+5. Accounts, Privacy, and Profiles
+5.1 Authentication
+Users should be able to create an account and sign in securely. Environmental assessments, goals, 
+historical results, achievements, and streaks should be linked to the user account.
+5.2 Public or private account
+Users should be able to choose whether their account is public or private and should be able to 
+change this preference later.
+ Private account: personal results and profile statistics are visible only to the user.
+ Public account: approved profile statistics can appear on the profile page, Explore page, 
+leaderboard, and real-life stories page.
+ Public status must be based on explicit consent. Sensitive raw data, uploaded bills, exact 
+household details, and private conversations must never be exposed publicly.
+ Users should be able to withdraw public consent, after which their public profile and related 
+social appearances should be hidden.
+5.3 Profile page
+Each user should have a profile page. It should display:
+ Display name and optional profile image.
+ How long the user has been on the app.
+ Current impact score or rating.
+ Water, electricity, and carbon performance summaries.
+ Current weekly or monthly streak.
+ Achievements and badges earned.
+ Goals completed and recent progress.
+ For public users only: the subset of statistics approved for public display.
+6. Two Assessment Methods
+The application should allow users to complete the assessment in one of two ways. Both methods 
+must collect the same underlying data and produce identical calculations and final results.
+6.1 Method 1 - Guided Questionnaire
+The application asks structured questions using forms, sliders, dropdowns, checkboxes, and file 
+uploads. This method is intended for users who prefer a traditional questionnaire.
+--- page 5 ---
+AI Environmental Impact Tracker - Product Specification
+Working title: Sprout / I/mpact   |   Page 5
+6.2 Method 2 - AI Conversation
+The user chats naturally with an AI assistant. The assistant should ask only relevant follow-up 
+questions until enough information has been collected. It should extract structured values from 
+natural-language answers and store them in the same data schema used by the guided 
+questionnaire.
+Important requirement
+The conversational assistant must not ask every possible question. It should use the same conditional 
+logic as the questionnaire and stop once the minimum meaningful data has been collected.
+7. General Information
+Collect only the general information required to choose appropriate regional factors and 
+normalize household data:
+ Household size.
+ Country.
+ Province, state, or region - optional unless needed for a regional factor.
+ Municipality or local utility - optional unless needed for bill interpretation or local factors.
+Household-level water and electricity values should be divided or otherwise normalized 
+appropriately when presenting per-person impact. The app should clearly distinguish household 
+totals from personal estimates.
+8. Water Assessment
+8.1 Preferred option - bill or statement upload
+Users should be able to upload an image or digital copy of a municipal water bill or water 
+statement. The image-processing system should extract relevant fields, including:
+ Billing period or statement dates.
+ Measured water consumption, preferably in litres or kilolitres.
+ Water bill amount, where available.
+ Meter readings, where useful for validation.
+ Municipality or utility name, where it can be identified reliably.
+The user must be shown the extracted values and be allowed to correct them before calculations 
+are finalized. Actual measured consumption should always take priority over bill-cost conversion 
+or behavioural estimates.
+8.2 Manual entry
+If no bill is uploaded, allow the user to enter monthly water consumption directly. A monthly 
+water bill amount may be accepted as a fallback only when a defensible tariff or conversion 
+method is available.
+--- page 6 ---
+AI Environmental Impact Tracker - Product Specification
+Working title: Sprout / I/mpact   |   Page 6
+8.3 Rainwater harvesting
+Ask whether the household uses rainwater harvesting. If yes, ask for the approximate percentage 
+of household water supplied by rainwater. Rainwater should be treated as having a significantly 
+lower environmental burden than municipally supplied water, using a transparent assumption or 
+factor.
+8.4 Estimation questions - only when needed
+Only when reliable consumption data is unavailable, ask a minimal set of questions such as:
+ Average shower duration.
+ Number of showers per week.
+ Garden irrigation.
+ Swimming pool ownership.
+Additional behavioural questions should only be added if testing shows that they materially 
+improve the estimate.
+9. Electricity Assessment
+9.1 Preferred option - bill, receipt, or meter record upload
+Users should be able to upload images of electricity bills, prepaid electricity receipts, or meter 
+statements. The AI extraction system should identify relevant values such as:
+ Billing or purchase period.
+ Electricity consumption in kWh, when shown.
+ Electricity bill or prepaid purchase amount.
+ Tariff, meter, municipality, or utility information when reliably identifiable.
+ Multiple prepaid purchases within a period, where the user uploads more than one receipt.
+The app should verify and normalize units, show extracted values for user confirmation, and 
+prioritize measured kWh over monetary conversion.
+9.2 Manual entry
+If no bill or receipt is available, allow users to enter monthly electricity consumption directly. 
+Monthly bill amount may be used only as a fallback where a suitable tariff method is available.
+9.3 Renewable electricity
+Ask whether the household generates renewable electricity. Options include Solar, Wind, and 
+None. If renewable electricity is used, estimate the percentage of household electricity supplied by 
+renewable sources.
+9.4 Backup power and loadshedding
+Ask whether the household uses backup power during outages. Options include Generator, 
+Inverter and battery, Solar battery backup, UPS, and None.
+--- page 7 ---
+AI Environmental Impact Tracker - Product Specification
+Working title: Sprout / I/mpact   |   Page 7
+ For generators: collect fuel type and either average hours used per month or litres of fuel used 
+per month.
+ For inverter, battery, or solar backup: collect the approximate share of electricity supplied 
+during outages, whether it powers the whole home or essential loads only, and whether 
+charging comes from the grid, solar, or both.
+Backup power should be reflected in electricity-related analysis and, where appropriate, in the 
+carbon footprint.
+9.5 Estimation questions - only when measured data is unavailable
+ Home size.
+ Electric geyser.
+ Air conditioner.
+ Electric stove.
+ Pool pump.
+10. Carbon Footprint Assessment
+The carbon footprint should include transport, household energy, flights, heating, diet, food waste, 
+shopping or consumption habits, backup power, and offsets where data is available.
+10.1 Flights
+Allow users to add multiple flights. For each flight collect:
+ Departure airport.
+ Arrival airport.
+ Cabin class.
+ One-way or return.
+ Number of trips per year.
+Flight distance should be calculated automatically from airport coordinates or an approved flight-
+distance data source.
+10.2 Personal vehicle
+ Vehicle manufacturer.
+ Vehicle model.
+ Model year.
+ Annual distance driven.
+ Average number of passengers.
+The application should determine fuel type and fuel economy automatically whenever a reliable 
+vehicle database is available. Manual fuel economy should be a fallback.
+10.3 Public transport
+Collect transport type and average distance travelled each week. Supported transport types should 
+include Bus, Train, Minibus taxi / taxi, Subway, and Other.
+--- page 8 ---
+AI Environmental Impact Tracker - Product Specification
+Working title: Sprout / I/mpact   |   Page 8
+10.4 Home heating
+Collect primary heating method, months used annually, and average hours used per day. Heating 
+methods may include Electricity, Gas, Coal, Wood, Paraffin / kerosene, Heat pump, and None.
+10.5 Diet
+Allow users to choose the description that best matches their diet: Heavy meat eater, Average diet, 
+Mostly chicken, Pescatarian, Vegetarian, or Vegan.
+10.6 Food waste
+Estimate the share of purchased food that is wasted. Suggested choices: None, Very little, Around 
+10%, Around 20%, or More than 30%.
+10.7 Shopping habits
+Ask users to compare their purchasing habits with the average person: Much less, Less, Average, 
+More, or Much more. This represents clothing, electronics, household goods, and similar 
+consumption.
+10.8 Carbon offsets
+Ask whether users purchase certified carbon offsets. If yes, collect the approximate annual amount 
+of carbon offset, preferably in tonnes of CO2e or another clearly convertible unit.
+11. Artificial Intelligence and API Requirements
+Artificial intelligence serves four distinct roles. These roles should be separated from the 
+deterministic calculation engine.
+11.1 Conversational data collection
+Use an LLM through an API. The API should receive the current structured assessment state plus 
+the conversation and return structured data for any newly collected values, missing fields that still 
+matter, and the next concise follow-up question when needed.
+ Use structured JSON output or function/tool calling where supported.
+ Validate extracted values against the application schema before saving them.
+ Do not allow the LLM to invent consumption values when the user has not supplied enough 
+information.
+ Keep API keys server-side or in environment variables/secrets. Never expose keys in client code 
+or the repository.
+ Provide clear fallback behaviour if the API is unavailable.
+11.2 Environmental analysis
+After deterministic calculations are complete, send the calculated results and relevant user context 
+to the LLM API. The AI should:
+ Explain the user's environmental footprint in simple language.
+--- page 9 ---
+AI Environmental Impact Tracker - Product Specification
+Working title: Sprout / I/mpact   |   Page 9
+ Identify the largest contributors.
+ Explain why those contributors matter.
+ Recommend practical improvements.
+ Prioritize recommendations by likely impact, feasibility, and cost or effort.
+ Estimate the environmental benefit of each recommendation where the calculation engine can 
+support a defensible estimate.
+ Avoid making unsupported claims or presenting uncertain estimates as exact.
+11.3 AI planning assistant
+The application should include a dedicated planning chat where users can discuss how to improve 
+their impact. This feature should use an LLM API and should be grounded in the user's current 
+results, historical progress, goals, and stated constraints.
+ The user can ask questions such as how to reduce water use without changing their garden, 
+how to lower electricity use on a budget, or how to plan lower-carbon transport for the week.
+ The assistant should translate broad intentions into specific, measurable, realistic actions.
+ The assistant should help revise weekly goals when circumstances change.
+ The assistant should not directly overwrite user data or goals without explicit confirmation.
+11.4 AI image extraction for bills and receipts
+Use a multimodal AI model or document-extraction API capable of interpreting uploaded images. It 
+should extract relevant values from water bills, electricity bills, prepaid receipts, and statements.
+ Return extracted fields in a strict structured schema.
+ Preserve the original image privately and do not expose it on public profiles.
+ Show confidence or flag uncertain fields when the provider supports it.
+ Require user review and correction of extracted values before final submission.
+ Use traditional parsing or OCR rules where more reliable for a known bill format; the AI model 
+should not be the only possible extraction path.
+Architecture rule
+The LLM is an advisor and interpreter, not the source of truth for arithmetic. Environmental 
+calculations must use established conversion factors and deterministic code so the same inputs 
+produce the same outputs.
+12. Information and Education Page
+The application should include a dedicated information page that educates users without requiring 
+them to read long technical documents. It should be visually engaging and divided into three clear 
+topics.
+12.1 Greenhouse gases
+ Explain what greenhouse gases are and what CO2e means.
+ Explain the main personal sources covered by the app, including energy, transport, flights, diet, 
+and consumption.
+--- page 10 ---
+AI Environmental Impact Tracker - Product Specification
+Working title: Sprout / I/mpact   |   Page 10
+ Explain why cumulative emissions matter and why reducing high-impact activities can make a 
+measurable difference.
+12.2 Electricity
+ Explain the difference between electricity consumption and the emissions associated with 
+generating that electricity.
+ Explain why grid mix, renewable energy, efficiency, peak use, backup generation, and 
+household equipment matter.
+ Connect lower electricity use to practical outcomes such as cost savings and reduced demand.
+12.3 Water
+ Explain direct household water use and the energy and infrastructure required to collect, treat, 
+pump, heat, and dispose of water.
+ Explain water scarcity and why local context matters.
+ Show practical examples of high-impact and low-impact changes.
+12.4 Why users can make a difference
+The page should explain that environmental problems require action from governments, 
+companies, cities, and infrastructure systems as well as individuals. The user should still 
+understand that personal changes can reduce direct resource use, save money, influence 
+household behaviour, create social norms, and contribute to demand for lower-impact products 
+and systems.
+13. Feedback Dashboard and Progress Tracking
+After completing an assessment, users should receive a clear feedback dashboard rather than a 
+single score.
+13.1 Core KPI cards
+The dashboard should show separate KPI-style cards for:
+ Water consumption.
+ Electricity consumption.
+ Carbon footprint.
+Each card should show the current value, comparison with the previous period or previous 
+assessment, and comparison with an appropriate benchmark where available.
+13.2 Historical comparison
+Users should be able to compare their current impact with previous statistics. The dashboard 
+should show change over time and make direction clear, for example percentage improvement or 
+deterioration since the previous assessment and since the user joined the app.
+--- page 11 ---
+AI Environmental Impact Tracker - Product Specification
+Working title: Sprout / I/mpact   |   Page 11
+13.3 Separate graphs for each metric
+Provide separate trend graphs for water, electricity, and carbon. Do not combine unrelated units 
+on one axis. Graphs should support weekly, monthly, and longer-term views when enough 
+historical data exists.
+13.4 Unit period dropdown
+Users should be able to choose whether statistics are displayed per day, week, month, or year. The 
+selected period should consistently update cards, graphs, breakdowns, and comparisons where 
+mathematically appropriate.
+13.5 Relevant and relatable comparisons
+In addition to exact values, the dashboard should generate relatable comparisons. Examples 
+include:
+ Your annual water use is roughly equivalent to the volume of a small swimming pool.
+ Your electricity use this month could power a typical efficient refrigerator for approximately a 
+certain period.
+ Your annual carbon footprint is comparable to a certain number of return trips on a relevant 
+route, where the comparison is based on a defensible factor.
+These comparisons must be based on defined conversion factors and should be selected for 
+relevance and scale. Avoid absurd comparisons that are technically true but not useful.
+13.6 Benchmarks and context
+Where reliable data is available, compare results against South African, African, country-level, and 
+global averages. The app should clearly label the benchmark source and geographic scope. A 
+benchmark should not be shown if the underlying comparison is misleading or unsupported.
+13.7 Specific weekly goals
+Feedback should include a small number of specific weekly goals based on the largest realistic 
+improvement opportunities. Goals should be measurable and practical, for example:
+ Reduce shower time by a total of 15 minutes across the week.
+ Replace two short car trips with walking, cycling, or public transport.
+ Reduce geyser heating time or adjust its schedule where appropriate.
+ Plan one lower-impact meal change that fits the user's existing diet rather than prescribing an 
+unrealistic full lifestyle shift.
+The AI may help phrase and personalize goals, but the expected environmental saving should 
+come from deterministic calculations where possible.
+14. Reminders and Reassessment
+Users should be encouraged to keep their data current. During onboarding or settings, users should 
+choose a reminder cadence: weekly or monthly.
+--- page 12 ---
+AI Environmental Impact Tracker - Product Specification
+Working title: Sprout / I/mpact   |   Page 12
+ Remind users to update recent usage patterns, add new bills or receipts, and confirm whether 
+major habits changed.
+ Do not force users to repeat the full assessment when only a few inputs have changed.
+ Use the previous assessment as the starting point and ask only for changed or expired 
+information.
+ Allow users to snooze or disable reminders.
+15. Community, Stories, and Leaderboard
+15.1 Real-life stories
+Create a page that shows real-life stories of users who reduced their impact through the app. 
+Stories may only be shown when users have consented to a public account and separately 
+consented to having their story featured.
+ Show the starting challenge, actions taken, time period, and measured improvement.
+ Prefer verified in-app statistics over purely anecdotal claims.
+ Allow users to share practical lessons and realistic obstacles.
+ Do not expose sensitive household or billing information.
+15.2 Explore and public profiles
+A public Explore page should allow users to discover public profiles, progress stories, and 
+achievements. It should focus on inspiration and practical change, not only competition.
+15.3 Leaderboard
+Provide a public ranking system for users who opt in. Rankings should be designed carefully so 
+users with naturally different household circumstances are not unfairly compared.
+ Possible ranking views: improvement percentage, goal completion, streak length, and impact 
+score.
+ Prefer improvement-based rankings over raw lowest-consumption rankings when this creates 
+a fairer comparison.
+ Allow filters such as country or region only when privacy and sample size are sufficient.
+ Public users should control which approved summary statistics appear.
+16. Mascot and Reactive Environmental Visuals
+16.1 Mascot concept
+The app should include a single daisy flower growing on top of a small Earth. This mascot visually 
+reflects the user's current environmental impact relative to appropriate national averages or 
+benchmarks.
+ Better-than-average impact: the Earth is clear and bright, the sky is sunny, colours are healthy, 
+and the daisy stands upright and grows.
+ Near-average impact: the scene remains mostly healthy with mild clouds or reduced vibrancy.
+--- page 13 ---
+AI Environmental Impact Tracker - Product Specification
+Working title: Sprout / I/mpact   |   Page 13
+ Worse-than-average impact: the Earth becomes darker and cloudier, heat or fire effects 
+gradually appear, and the daisy begins to droop or wilt.
+ The transition should be gradual rather than binary. The user should see progress as their 
+impact improves.
+ The mascot should never shame the user. Poor performance should be paired with clear next 
+actions and a visible path to recovery.
+16.2 Live or semi-live nature wallpaper
+The broader app background should include a live or semi-live nature scene that reacts to the 
+user's current impact in a similar way to the mascot.
+ Good impact: clearer sky, sunlight, healthy vegetation, subtle movement, and brighter 
+atmosphere.
+ Poor impact: more haze, cloud, muted vegetation, dryness, or heat effects.
+ Transitions should be lightweight enough for the target platform and should not interfere with 
+readability or accessibility.
+ The wallpaper should reinforce the app's fun design language while keeping the foreground 
+interface clean and legible.
+17. Achievements, Goals, and Streaks
+17.1 Achievements
+Users should unlock achievements when they complete meaningful actions or maintain good 
+performance. Examples include:
+ First assessment completed.
+ First verified bill uploaded.
+ Completed all weekly goals.
+ Reduced one metric for three consecutive reporting periods.
+ Reached a personal best impact score.
+ Maintained a long update streak.
+ Reduced a major footprint contributor by a meaningful percentage.
+Achievements should reward actual progress and consistent engagement rather than encourage 
+meaningless clicking or data entry.
+17.2 Streak feature
+Track how many consecutive weeks or months a user has kept their profile updated or completed 
+the required check-in. The streak cadence should match the user's selected reminder cadence.
+ Weekly users build a weekly streak.
+ Monthly users build a monthly streak.
+ Streak status should appear on the profile page and dashboard.
+ A missed update should not necessarily erase all historical recognition; preserve best streak as 
+well as current streak.
+--- page 14 ---
+AI Environmental Impact Tracker - Product Specification
+Working title: Sprout / I/mpact   |   Page 14
+18. Calculation Philosophy
+The application should calculate environmental impact using established conversion factors and 
+scientific datasets. Calculations must be deterministic and reproducible.
+ Measured data always takes priority over estimated data.
+ Behavioural estimates should only be used when measured values are unavailable.
+ Where possible, use South African and African regional datasets, including local electricity grid 
+factors, municipal water data, transport assumptions, and country-specific emissions factors.
+ Store factor source, geography, unit, and version or date where practical so calculations can be 
+audited and updated.
+ The app should distinguish between direct consumption metrics and environmental impact 
+metrics. For example, kWh is not the same thing as electricity-related CO2e.
+19. Suggested Page Structure
+The application should contain at least the following pages or functional areas:
+Page Purpose
+Home
+Purpose, value proposition, explanation of the 
+three metrics, sign-up and assessment entry 
+points.
+Sign Up / Sign In Authentication and account creation.
+Assessment Guided questionnaire with conditional inputs 
+and bill uploads.
+AI Assessment Chat Conversational collection of the same structured 
+assessment data.
+Feedback Dashboard
+KPIs, exact metrics, trends, benchmarks, 
+relatable comparisons, breakdowns, and weekly 
+goals.
+AI Planner LLM API chat grounded in user data, goals, and 
+historical progress.
+Information Education on greenhouse gases, electricity, water, 
+and why change matters.
+Profile
+Membership duration, score, streaks, 
+achievements, goals, and public statistics where 
+permitted.
+Explore / Stories Public profiles and consented success stories.
+Leaderboard Opt-in rankings focused on improvement, goals, 
+streaks, and impact.
+Settings Privacy, reminder cadence, unit period defaults, 
+account settings, and consent controls.
+--- page 15 ---
+AI Environmental Impact Tracker - Product Specification
+Working title: Sprout / I/mpact   |   Page 15
+20. Data and State Requirements
+The application should maintain structured data so that questionnaire inputs, chat inputs, image 
+extraction, calculations, history, goals, and social features all use consistent records.
+ User record: account, privacy status, join date, reminder cadence, and unit-period preference.
+ Assessment record: timestamp, reporting period, source type for each input, measured-versus-
+estimated flag, and calculated outputs.
+ History record: water, electricity, carbon, overall score, and category breakdowns over time.
+ Goal record: target action, metric, target value, start date, end date, status, and completion 
+result.
+ Achievement record: achievement type, date earned, and evidence or trigger.
+ Streak record: cadence, current streak, best streak, and last valid check-in.
+ Public profile settings: exact fields that the user has allowed to be shown publicly.
+ Story consent and story record: separate from general public-account consent.
+ Uploaded bill record: private file reference, extraction result, user-corrected values, and 
+validation status.
+21. Dashboard Output Requirements
+The dashboard should summarize results in a way that is useful both immediately and over time. It 
+should include:
+ Total water consumption.
+ Total electricity consumption.
+ Total carbon footprint.
+ Category breakdowns and largest contributors.
+ National and other relevant benchmark comparisons where supported.
+ Change from previous period and change since joining.
+ Separate historical graphs for each metric.
+ Per day, week, month, or year display selector.
+ Relatable equivalence comparisons.
+ AI-generated interpretation.
+ Specific weekly goals.
+ Progress toward active goals.
+ Current streak and recent achievements.
+ Reactive mascot and nature visuals linked to current impact.
+22. Long-Term Vision
+The application should become a personal environmental companion rather than a once-off 
+calculator. The immediate product should already support historical tracking, goals, achievements, 
+streaks, AI planning, bill-image extraction, reminders, and optional community features. Future 
+extensions may include:
+ Community challenges.
+--- page 16 ---
+AI Environmental Impact Tracker - Product Specification
+Working title: Sprout / I/mpact   |   Page 16
+ Household or school teams.
+ Smart meter and prepaid meter integrations.
+ Utility-provider integrations.
+ Solar inverter and backup-power integrations.
+ Personalized periodic progress reports.
+ More detailed regional environmental datasets across South Africa and Africa.
+ More robust verified-story workflows and community moderation.
+ Privacy-preserving neighbourhood or city comparisons where sample sizes are sufficient.
+The overall vision is to create an accessible, scientifically grounded, visually engaging platform 
+that empowers individuals to understand and reduce their environmental impact through 
+accurate measurement, education, progress tracking, social inspiration, and actionable AI-driven 
+guidance.
+Appendix A. Non-Negotiable Implementation Rules
+1. Ask only relevant and meaningful questions.
+2. Prefer measured values over estimates.
+3. Use the same underlying schema and calculation engine for questionnaire and chat input.
+4. Use an LLM API for conversational collection, analysis, and planning; use a multimodal model or 
+document-extraction API for bill images.
+5. Never let the LLM perform the authoritative footprint arithmetic.
+6. Require users to review AI-extracted bill data before calculation.
+7. Keep uploaded bills, raw household data, and private chats private regardless of public profile 
+status.
+8. Require explicit consent for public profiles and separate consent for featured stories.
+9. Show exact metrics together with context, trends, and relatable comparisons.
+10. Provide specific weekly goals and allow the user to discuss and revise plans through the AI 
+planner.
+11. Support weekly or monthly reminders and corresponding streaks.
+12. Use the light blue, green, white, and grey visual theme consistently.
+13. Make the mascot and environmental wallpaper react gradually to the user's impact relative to 
+appropriate benchmarks.
+14. Keep the tone friendly and optimistic while remaining honest about poor performance and 
+uncertainty.

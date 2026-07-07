@@ -1,0 +1,1285 @@
+--- page 1 ---
+ENVIRONMENTAL IMPACT TRACKER
+Calculation Data and Conversion Factor Reference — MVP
+Version
+Purpose of this document
+This document defines the data, conversion factors, fallback assumptions and formulas required to
+calculate a user's:
+Water consumption
+Electricity consumption
+Carbon footprint
+The calculation system should be deterministic. The LLM should receive the results of these calculations
+and evaluate them, rather than independently calculating the footprint.
+The system should always use data in the following order of priority:
+Measured consumption, such as litres, kilolitres, kWh or fuel litres.
+Consumption extracted from a bill or statement.
+Consumption calculated from monetary cost using a local tariff table.
+Behaviour-based estimates.
+General averages or assumptions only as a final fallback.
+Each calculated result should also receive a confidence label:
+Calculation method Confidence label
+Meter , bill or statement containing actual consumptionHIGH
+User manually enters measured consumptionHIGH
+Monetary bill converted using the correct municipal tariffMEDIUM
+Appliance or activity calculation MEDIUM
+National average or broad behavioural estimateLOW
+[Unverified MVP assumption] VERY LOW
+1. 
+2. 
+3. 
+1. 
+2. 
+3. 
+4. 
+5. 
+1
+--- page 2 ---
+1. STANDARD UNITS AND GENERAL
+CALCULATION RULES
+Data point Input data Conversion
+factor or ruleOutput / formula Notes
+Household
+size
+Number of
+people
+No
+conversion household_size
+Required for per-
+person
+comparisons
+Monthly to
+annual
+Monthly
+value × 12 annual = monthly × 12
+Use for bills and
+monthly fuel
+consumption
+Weekly to
+annual
+Weekly
+value × 52 annual = weekly × 52
+Use for public
+transport and
+similar activities
+Daily to
+annual Daily value × 365 annual = daily × 365
+Use for diet and
+daily
+consumption
+kL to litres Kilolitres 1 kL = 1,000
+L litres = kL × 1000Standard water
+conversion
+Tonnes CO₂e
+to kg CO₂e tCO₂e × 1,000 kg_CO2e = tonnes_CO2e 
+× 1000
+Keep one carbon
+unit internally
+Percentage to
+fraction Percentage ÷ 100 fraction = 
+percentage / 100
+Example: 35%
+becomes 0.35
+Per-person
+household
+comparison
+Household
+total
+÷ household
+size
+per_person = 
+household_total / 
+household_size
+Do not change
+the actual
+household total
+Recommended internal units
+The Python calculations should standardise all results to:
+Water: litres per month and litres per person per day
+Electricity: kWh per month and kWh per year
+Carbon: kg CO₂e per year
+• 
+• 
+• 
+2
+--- page 3 ---
+2. WATER CALCULATIONS
+2.1 Main water calculation table
+Data point Input data
+Conversion
+factor or other
+data
+Formula / output Confidence and
+notes
+Actual
+municipal
+water
+consumption
+Monthly
+water
+usage in kL
+1 kL = 1,000 L water_L_month = water_kL × 
+1000
+HIGH. Preferred
+method
+Actual water
+consumption
+already in
+litres
+Litres/
+month None Use input directly HIGH
+Water bill
+amount
+Rand/
+month +
+municipality
++ tariff
+category
+Use municipality-
+specific
+progressive tariff
+function
+water_kL = 
+reverse_tariff(bill_amount, 
+tariff_table)
+MEDIUM. Never
+use one national
+R-to-litre factor
+National
+water-use
+fallback
+Household
+size
+218 L/person/
+day
+water_L_month = 218 × 
+household_size × 365 / 12
+LOW. Use only
+when no
+measured water
+data exists
+Water per
+person per
+day
+Household
+monthly
+litres +
+household
+size
+Month
+normalisation
+L_person_day = water_L_month 
+× 12 / 365 / household_size
+Use for
+comparisons
+Shower
+water
+Shower
+minutes +
+showers/
+week
+8 L/minute
+shower_L_month = minutes × 
+showers_per_week × 8 × 52 / 
+12
+MEDIUM
+estimate
+Household
+shower
+water
+Per-person
+shower
+calculation
+× household size
+household_shower_L = 
+shower_L_month × 
+household_size
+Only if shower
+answers
+describe the
+average
+individual
+Rainwater
+share when
+total
+household
+water is
+known
+Total water
++ rainwater
+percentage
+Percentage ÷ 100rainwater_L = total_water_L 
+× rain_fraction MEDIUM
+3
+--- page 4 ---
+Data point Input data
+Conversion
+factor or other
+data
+Formula / output Confidence and
+notes
+Municipal
+share when
+total
+household
+use is known
+Total water
++ rainwater
+share
+1 - 
+rain_fraction
+municipal_L = total_water_L 
+× (1 - rain_fraction)
+Do not use this
+if municipal
+water was
+already
+measured from
+the municipal
+bill
+Municipal
+bill plus
+stated
+rainwater
+share
+Municipal
+litres +
+rainwater
+percentage
+Approximation
+estimated_total_water = 
+municipal_L / (1 - 
+rain_fraction)
+[Approximation].
+Only valid when
+rainwater
+percentage is
+reasonably
+estimated and
+below 100%
+Garden
+irrigation
+Yes/no or
+frequency
+category
+No numerical
+factor in MVP Pass as contextual variable to LLM
+Do not invent
+litres from a yes/
+no answer
+Swimming
+pool Yes/no No numerical
+factor in MVP Pass as contextual variable to LLM
+Pool water loss
+varies
+substantially
+with pool area,
+cover use,
+evaporation and
+climate
+South African government sources currently use 218 litres per person per day as the national per-
+capita benchmark. Eskom's residential calculator uses 8 L/minute as its shower-flow assumption and
+explicitly describes its appliance calculations as approximate benchmarks rather than bill predictions. 
+Important rule for the coding LLM
+Do not add estimated shower use on top of the 218 L/person/day national fallback.
+The 218 L figure is already a total-use benchmark. Shower volume should be calculated separately to
+help the LLM understand where water is being used, not added to the national total.
+For example:
+estimated_total_water = 218 L/person/day baseline
+estimated_shower_water = separately calculated category information
+The LLM can then say:
+4
+--- page 5 ---
+"A large portion of your estimated water use appears to come from long or frequent
+showers."
+2.2 Converting a water bill into litres
+A single rule such as:
+R100 = X litres
+should not be used across South Africa.
+Municipal water tariffs can contain:
+different consumption blocks;
+fixed charges;
+free or subsidised allocations;
+different customer classifications;
+separate sanitation charges.
+Current Cape Town tariff documents, for example, use several consumption bands rather than one
+universal rand-per-litre rate. 
+Recommended coding method
+Store municipal tariff tables like this:
+water_tariffs= {
+"municipality_name": {
+"fixed_charge": ...,
+"blocks": [
+{"max_kl": 6, "rate_per_kl": ...},
+{"max_kl": 10.5, "rate_per_kl": ...},
+{"max_kl": 35, "rate_per_kl": ...},
+{"max_kl": None, "rate_per_kl": ...}
+]
+}
+}
+Then calculate the approximate consumption by reversing the progressive tariff.
+For the initial prototype, it is acceptable to support only a small number of municipalities and use the
+behavioural fallback when the municipality is unsupported.
+• 
+• 
+• 
+• 
+• 
+5
+--- page 6 ---
+2.3 Optional carbon emissions associated with water
+This calculation should be optional because a reliable South African national water supply-and-
+treatment carbon factor is not yet being used in this MVP .
+Data point Input Factor Formula Notes
+Water supply
+carbon
+Municipal water in
+m³
+0.1913 kg
+CO₂e/m³
+m3 × 
+0.1913 [UK proxy]
+Water treatment
+carbon
+Wastewater volume
+in m³
+0.17088 kg
+CO₂e/m³
+m3 × 
+0.17088 [UK proxy]
+Simple combined
+proxy
+Municipal water in
+m³
+0.36218 kg
+CO₂e/m³
+m3 × 
+0.36218
+[Simplified UK
+proxy]
+These factors come from the UK Government's 2026 GHG conversion-factor dataset and should be
+labelled as geographic proxies, not South African measurements. 
+For the first version of the app, I recommend displaying water use primarily in litres, not adding the
+water carbon proxy to the user's headline carbon footprint.
+3. ELECTRICITY CALCULATIONS
+3.1 Main electricity calculation table
+Data point Input data Conversion factor or
+other data Formula / output Confidence
+and notes
+Actual
+monthly
+electricity
+kWh/month None Use directly HIGH
+Prepaid
+electricity
+statement
+kWh
+purchased None Use actual kWh HIGH
+Electricity bill
+containing
+consumption
+Extracted
+kWh None Use actual kWh HIGH
+Bill amount
+only
+Rand +
+municipality/
+utility + tariff
+Local tariff lookup Reverse tariff calculationMEDIUM
+Grid
+electricity
+carbon
+Grid kWh 0.906 kg CO₂e/kWh grid_kWh × 0.906South African
+grid factor
+6
+--- page 7 ---
+Data point Input data Conversion factor or
+other data Formula / output Confidence
+and notes
+Annual
+electricity
+carbon
+Monthly grid
+carbon × 12 monthly_CO2e × 12Standard
+annualisation
+Renewable
+share when
+TOTAL
+consumption
+is entered
+Total kWh +
+renewable %Percentage fraction
+renewable_kWh = 
+total_kWh × 
+renewable_fraction
+Use only
+when input
+represents
+whole-house
+energy use
+Grid share
+when TOTAL
+consumption
+is entered
+Total kWh +
+renewable %
+1 - 
+renewable_fraction
+grid_kWh = 
+total_kWh × (1 - 
+renewable_fraction)
+Use for grid
+carbon
+calculation
+Utility bill
+kWh plus
+solar
+Grid-import
+kWh from
+bill
+Do not subtract solar
+again grid_kWh = bill_kWh
+The bill
+already
+represents
+grid imports
+Grid-
+charged
+inverter or
+UPS
+kWh already
+included in
+bill
+No extra addition Use existing bill total Avoid double
+counting
+Solar-
+charged
+battery
+backup
+Estimated
+solar kWh 0 operational grid kWhKeep as separate
+renewable category
+Lifecycle
+panel/battery
+emissions
+excluded
+from MVP
+The official South African 2023 grid-emission-factor report gives a national grid greenhouse-gas factor
+of 0.906 tCO₂e/MWh, numerically equivalent to 0.906 kg CO₂e/kWh. 
+Important rule
+When a user has solar:
+Do not do this:
+electricity bill kWh × (1 - solar percentage)
+The utility bill usually represents electricity imported from the grid. Subtracting solar from it again can
+undercount grid electricity.
+Instead:
+7
+--- page 8 ---
+grid_kWh = measured utility kWh
+solar_share = contextual information
+When the user enters an estimate of total whole-house electricity consumption, the renewable
+percentage can be subtracted.
+3.2 Electricity bill conversion
+Just like water , there should not be one national rule such as:
+R100 electricity = X kWh
+Residential electricity pricing differs by utility, tariff category, consumption band, fixed charges and
+subsidy status. Current Cape Town tariffs, for example, distinguish between different residential
+categories and consumption structures. 
+Recommended priority:
+actual kWh
+    ↓
+bill-extracted kWh
+    ↓
+municipality-specific tariff conversion
+    ↓
+appliance estimate
+4. ELECTRICITY ESTIMATION WHEN NO BILL OR
+METER DATA EXISTS
+Your current specification asks only about:
+home size;
+electric geyser;
+air conditioner;
+electric stove;
+pool pump.
+That information is not sufficient for a reliable deterministic calculation.
+A 1 kW appliance running for one hour and a 3 kW appliance running for eight hours are obviously very
+different, even though both users would answer "yes" to owning the appliance.
+• 
+• 
+• 
+• 
+• 
+8
+--- page 9 ---
+The simplest improvement is to add a small number of usage questions.
+Data point Input data Conversion Formula Notes
+Appliance
+electricity use
+Rated watts +
+hours used
+W ÷ 1000 =
+kW
+kWh = watts / 
+1000 × hours Standard formula
+Monthly
+appliance
+electricity
+Watts +
+hours/day × 30.42 days
+kWh_month = 
+watts / 1000 × 
+hours_day × 
+30.42
+Use for AC and
+pumps
+Pool pump
+Pump
+wattage +
+hours/day
+Standard
+kWh
+calculation
+pump_W / 1000 × 
+hours_day × 
+30.42
+Better than yes/no
+Air conditioner
+Rated input
+power +
+hours/day +
+months/year
+Standard
+kWh
+calculation
+Calculate active-
+month
+consumption and
+annualise
+Better than yes/no
+Electric heater
+Wattage +
+hours/day +
+months/year
+Standard
+kWh
+calculation
+kW × h/day × 
+30.42 × months
+Use only when no
+measured electricity
+is available
+Stove plate
+[1.5 kW
+default per
+active plate] +
+minutes/day
+Minutes ÷ 60 1.5 × minutes/
+60 × days
+[MVP assumption] if
+actual rating
+unknown
+Oven
+[2.5 kW
+default] +
+hours/week
+× 52 2.5 × 
+hours_week × 52[MVP assumption]
+Unmeasured
+household base
+load
+None [150 kWh/
+month]
+Add once per
+household
+[Very rough MVP
+assumption]; covers
+refrigeration, lighting
+and electronics
+Eskom's own residential calculator follows the same general approach: it asks about house
+characteristics and then requests usage information such as stove time, washing frequency, pool-pump
+wattage and pool-pump operating hours. 
+Recommendation
+For the prototype, do not attempt to make the electricity estimator highly accurate.
+Use:
+9
+--- page 10 ---
+Measured electricity available?
+    YES → use it.
+    NO → estimate broad consumption from major appliances.
+The output should then be labelled:
+calculation_confidence = "LOW"
+5. GENERATORS AND BACKUP POWER
+5.1 Generator emissions
+Generator
+fuel
+Input
+data
+Conversion
+factor Formula Geographic note
+Petrol Litres/
+month
+2.35372 kg
+CO₂e/L
+litres × 
+2.35372
+[UK Government combustion
+factor used as proxy]
+Diesel Litres/
+month
+2.66155 kg
+CO₂e/L
+litres × 
+2.66155 [100% mineral diesel proxy]
+LPG Litres/
+month
+1.55713 kg
+CO₂e/L
+litres × 
+1.55713 [Proxy]
+Natural gas m³/
+month
+2.04987 kg
+CO₂e/m³
+m3 × 
+2.04987 [100% mineral gas proxy]
+The fuel factors are taken from the full 2026 UK Government GHG conversion-factor dataset linked by
+the Department for Energy Security and Net Zero. They are useful generic combustion proxies, but
+should not be presented as South African lifecycle emission factors. 
+Recommended generator input priority
+Ask:
+How many litres of fuel does the generator use in a typical month?
+This is far better than asking only for operating hours.
+If the user does not know the litres:
+Input Calculation
+Generator hours/month fuel_L = hours × fuel_burn_rate_L_per_hour
+Manufacturer fuel rate availableUse manufacturer rate
+10
+--- page 11 ---
+Input Calculation
+No manufacturer informationfuel_L = hours × [1.5 L/hour]
+The [1.5 L/hour] value is a rough fallback assumption, not a verified universal generator
+consumption rate. Generator fuel consumption varies substantially with rated power and load.
+6. PERSONAL VEHICLE CALCULATIONS
+6.1 Preferred method
+Data point Input data
+Conversion
+factor /
+lookup
+Formula Notes
+Vehicle
+identification
+Make + model
++ year
+Vehicle
+database
+Find fuel type and L/100
+km Preferred
+Annual drivingkm/year None Use directly Required
+Fuel
+consumption L/100 km ÷ 100
+annual_fuel_L = 
+annual_km × 
+L_per_100km / 100
+Standard
+formula
+Petrol vehicle
+carbon Annual litres 2.35372 kg
+CO₂e/L
+annual_fuel_L × 
+2.35372
+[Combustion
+proxy]
+Diesel vehicle
+carbon Annual litres 2.66155 kg
+CO₂e/L
+annual_fuel_L × 
+2.66155
+[Combustion
+proxy]
+Personal share
+when ride-
+sharing
+Vehicle
+emissions +
+average
+occupants
+Divide by
+average
+occupants
+personal_CO2e = 
+vehicle_CO2e / 
+occupants
+[Simplified
+equal-allocation
+method]
+Electric vehiclekm/year +
+kWh/km SA grid factorkm × kWh_per_km × 
+0.906
+Use actual
+vehicle efficiency
+where available
+The underlying combustion factors are drawn from the 2026 UK Government conversion-factor dataset,
+while electric-vehicle grid emissions should use the South African grid factor . 
+6.2 Essential fallback questions
+When the vehicle database cannot find the model, ask only:
+Fuel type
+Average fuel consumption in L/100 km
+This is much easier and safer than attempting to make the LLM estimate vehicle fuel economy from the
+vehicle name.
+1. 
+2. 
+11
+--- page 12 ---
+7. PUBLIC TRANSPORT
+For the MVP , public transport should use passenger-kilometre factors.
+Formula
+annual_passenger_km = weekly_distance_km × 52
+annual_CO2e =
+annual_passenger_km
+× transport_emission_factor
+Conversion table
+Transport modeUser
+input Factor Formula Note
+Bus km/
+week
+0.12552 kg CO₂e/
+passenger-km
+km_week × 52 × 
+0.12552 [UK proxy]
+Average local
+bus
+km/
+week
+0.10151 kg CO₂e/
+passenger-km
+km_week × 52 × 
+0.10151 [UK proxy]
+Coach km/
+week
+0.03948 kg CO₂e/
+passenger-km
+km_week × 52 × 
+0.03948 [UK proxy]
+Train km/
+week
+0.03092 kg CO₂e/
+passenger-km
+km_week × 52 × 
+0.03092
+[UK rail proxy; SA grid
+and operations differ]
+Light rail / tramkm/
+week
+0.02121 kg CO₂e/
+passenger-km
+km_week × 52 × 
+0.02121 [UK proxy]
+Metered taxi /
+ride
+km/
+week
+0.14861 kg CO₂e/
+passenger-km
+km_week × 52 × 
+0.14861 [UK taxi proxy]
+South African
+minibus taxi
+km/
+week
+[0.12552 kg CO₂e/
+passenger-km]
+km_week × 52 × 
+0.12552 [Temporary bus proxy]
+The numerical passenger-kilometre factors above are taken from the 2026 UK Government conversion-
+factor dataset and therefore need to be clearly marked as proxies. 
+For minibus taxis, a temporary proxy is preferable to pretending that a precise national passenger-
+kilometre factor exists. Recent South African research models minibus-taxi emissions using vehicle-
+specific fuel consumption and actual operating distances, illustrating why a more detailed future model
+would need occupancy and operational data. 
+12
+--- page 13 ---
+8. FLIGHTS
+8.1 Required user inputs
+For every flight:
+Departure airport
+Arrival airport
+Cabin class
+One-way or return
+Number of trips per year
+8.2 Airport distance calculation
+The application should store:
+airport_code
+latitude
+longitude
+country
+Calculate great-circle distance using the Haversine formula.
+route_distance_km =
+haversine(departure_latitude,
+          departure_longitude,
+          arrival_latitude,
+          arrival_longitude)
+8.3 Simple flight factors for MVP
+Domestic or short-haul flight proxy
+Cabin Factor
+Economy 0.12576 kg CO₂e/passenger-km
+Business 0.18863 kg CO₂e/passenger-km
+International non-UK flight
+Cabin Factor
+Economy 0.10916 kg CO₂e/passenger-km
+Premium economy0.17465 kg CO₂e/passenger-km
+Business 0.31656 kg CO₂e/passenger-km
+• 
+• 
+• 
+• 
+• 
+13
+--- page 14 ---
+Cabin Factor
+First 0.43663 kg CO₂e/passenger-km
+Formula
+direction_multiplier =
+1 for one-way
+2 for return
+flight_CO2e =
+route_distance_km
+× cabin_factor
+× direction_multiplier
+× trips_per_year
+The factors are from the UK Government's 2026 flight conversion tables. The published factors already
+incorporate an 8% flight-distance uplift, so the code should not add another 8%. The Government
+dataset also provides factors that include the indirect effects of non-CO₂ aviation emissions. 
+For the MVP:
+same-country flight → use short-haul proxy
+different-country flight → use international non-UK factor
+This is a deliberate simplification.
+9. HOME HEATING
+The original questions:
+heating type
+months used
+hours per day
+are sufficient for electric heating only when heater wattage is known or assumed.
+For fuels such as gas, paraffin, coal and wood, hours alone are not enough. The app should ask for the
+approximate amount of fuel used.
+14
+--- page 15 ---
+Heating
+method Input data Factor or
+rule Formula Note
+Electric
+heater
+Heater watts +
+hours/day +
+months/year
+SA grid =
+0.906 kg
+CO₂e/kWh
+Calculate kWh,
+then × 0.906
+Do not add separately if
+already included in measured
+household electricity
+LPG heater Litres/year 1.55713 kg
+CO₂e/L
+litres × 
+1.55713 [Combustion proxy]
+Natural gasm³/year 2.04987 kg
+CO₂e/m³
+m3 × 
+2.04987 [Combustion proxy]
+Paraffin /
+kerosene Litres/year 2.54016 kg
+CO₂e/L
+litres × 
+2.54016 [Burning-oil proxy]
+Domestic
+coal kg/year 2.90495 kg
+CO₂e/kg
+kg × 
+2.90495 [Combustion proxy]
+Wood kg/year No simple
+MVP factor
+Store
+separately and
+give to LLM
+Biomass carbon accounting
+is too complicated to
+represent honestly as simply
+zero
+The fossil-fuel factors are drawn from the 2026 UK Government GHG conversion-factor dataset and are
+geographic proxies. 
+10. DIET CARBON FOOTPRINT
+For the MVP , use one annual diet factor based on the selected diet category.
+App diet
+category Input Daily factorAnnual
+formula Note
+Heavy meat
+eater
+Category
+selection
+7.19 kg
+CO₂e/day
+7.19 × 
+365 UK dietary study
+Average diet Category
+selection
+5.63 kg
+CO₂e/day
+5.63 × 
+365 Mapped to medium meat eater
+Mostly
+chicken
+Category
+selection
+[4.67 kg
+CO₂e/day]
+4.67 × 
+365
+[Proxy mapping to low-meat
+category, not specifically chicken]
+Pescatarian Category
+selection
+3.91 kg
+CO₂e/day
+3.91 × 
+365 Study category: fish-eater
+Vegetarian Category
+selection
+3.81 kg
+CO₂e/day
+3.81 × 
+365 Study category
+Vegan Category
+selection
+2.89 kg
+CO₂e/day
+2.89 × 
+365 Study category
+15
+--- page 16 ---
+These values come from a peer-reviewed study of UK diets standardised to 2,000 kcal/day. The study
+reported 7.19 kg CO₂e/day for high-meat diets, 5.63 for medium-meat, 4.67 for low-meat, 3.91 for fish-
+eaters, 3.81 for vegetarians and 2.89 for vegans. They should therefore be treated as diet-category
+proxies rather than South African-specific personal measurements. 
+11. FOOD WASTE
+Food-waste category mapping
+User option Waste fraction used by code
+None 0.00
+Very little [0.03]
+Around 10% 0.10
+Around 20% 0.20
+More than 30%[0.35]
+The 3% and 35% values are [MVP assumptions].
+Simplified calculation
+diet_CO2_before_waste = selected daily diet factor × 365
+diet_CO2_with_waste =
+diet_CO2_before_waste / (1 - waste_fraction)
+This is a [simplified model assumption].
+Example:
+diet footprint = 2,000 kg CO₂e/year
+food waste = 20%
+adjusted footprint =
+2000 / 0.8
+= 2,500 kg CO₂e/year
+The difference:
+500 kg CO₂e
+is attributed to the additional food that must be purchased to compensate for waste.
+16
+--- page 17 ---
+12. SHOPPING HABITS
+The current options are:
+Much less
+Less
+Average
+More
+Much more
+These are too vague to produce a scientifically defensible carbon number .
+For the MVP , use an intensity score:
+Shopping selectionScore
+Much less [0.60]
+Less [0.80]
+Average [1.00]
+More [1.25]
+Much more [1.50]
+These scores are [MVP assumptions].
+Recommended use
+Do:
+shopping_intensity_score = 1.25
+and send it to the LLM:
+{
+"shopping_habit": "more than average",
+"shopping_intensity_score": 1.25
+}
+Do not do this in the MVP:
+total_carbon += shopping_score × arbitrary tonnes of CO₂
+• 
+• 
+• 
+• 
+• 
+17
+--- page 18 ---
+The LLM can use the shopping category to recommend:
+buying fewer new clothes;
+using electronics for longer;
+repairing rather than replacing;
+buying second-hand goods;
+reducing unnecessary purchases.
+A later version can ask for spending by category and use environmentally extended input-output
+factors.
+13. CARBON OFFSETS
+Data point Input Conversion Formula
+Certified
+offsets tCO₂e/year × 1,000 offset_kg = offset_tonnes × 
+1000
+Gross
+footprint
+Sum of all emission
+categories None gross_CO2e
+Net footprintGross footprint minus
+offsets
+Lower limit
+0
+net_CO2e = max(gross_CO2e - 
+offset_kg, 0)
+Always store and display:
+gross carbon footprint
+carbon offsets
+net carbon footprint
+Do not hide the actual emissions categories after subtracting offsets.
+14. FINAL CARBON AGGREGATION
+Use:
+gross_carbon_CO2e_year =
+    household_grid_electricity_CO2e
+  + generator_CO2e
+  + personal_vehicle_CO2e
+  + public_transport_CO2e
+  + flight_CO2e
+  + non_electric_heating_CO2e
+  + diet_and_food_waste_CO2e
+• 
+• 
+• 
+• 
+• 
+18
+--- page 19 ---
+For the first MVP:
+shopping behaviour → qualitative analysis only
+water supply carbon → optional, not included by default
+renewable electricity → reduces grid electricity only where appropriate
+carbon offsets → shown separately and subtracted afterwards
+Then:
+net_carbon_CO2e_year =
+max(
+    gross_carbon_CO2e_year
+    - certified_offset_CO2e_year,
+    0
+)
+15. FINAL WATER OUTPUTS
+The app should send the LLM:
+{
+"total_water_litres_month": ...,
+"municipal_water_litres_month": ...,
+"rainwater_litres_month": ...,
+"water_litres_person_day": ...,
+"shower_litres_month_estimated": ...,
+"garden_irrigation": ...,
+"pool_owned": ...,
+"calculation_method": ...,
+"confidence": ...
+}
+The most important comparison variable is:
+water_litres_person_day
+South Africa comparison reference:
+218 L/person/day
+The 218 L/person/day benchmark is the current figure stated by South African government sources. 
+19
+--- page 20 ---
+16. FINAL ELECTRICITY OUTPUTS
+Send:
+{
+"total_electricity_kWh_month": ...,
+"grid_electricity_kWh_month": ...,
+"renewable_electricity_kWh_month": ...,
+"renewable_share_percent": ...,
+"electricity_CO2e_year": ...,
+"backup_power_type": ...,
+"generator_CO2e_year": ...,
+"calculation_method": ...,
+"confidence": ...
+}
+17. FINAL CARBON OUTPUTS
+Send:
+{
+"gross_CO2e_kg_year": ...,
+"net_CO2e_kg_year": ...,
+"breakdown": {
+"electricity": ...,
+"generator": ...,
+"personal_vehicle": ...,
+"public_transport": ...,
+"flights": ...,
+"heating": ...,
+"diet_and_food_waste": ...
+},
+"context": {
+"shopping_habit": ...,
+"shopping_intensity_score": ...,
+"garden_irrigation": ...,
+"pool_owned": ...,
+"renewable_share": ...
+},
+"carbon_offsets_kg_year": ...,
+"calculation_confidence": ...
+}
+20
+--- page 21 ---
+18. MINIMUM ADDITIONAL QUESTIONS I
+RECOMMEND ADDING
+The current project specification is largely workable, but these additions would substantially improve
+accuracy without making the app excessively complicated.
+Section Additional question Why it is needed
+Vehicle Fuel type, only if database lookup failsPrevents LLM guessing
+Vehicle L/100 km, only if database lookup failsAllows direct carbon calculation
+Pool pump Wattage Yes/no is insufficient
+Pool pump Hours operated per day Required for kWh
+Air
+conditioner Rated power or approximate kW Required for kWh
+Air
+conditioner Average hours/day when used Required for kWh
+Generator Litres of fuel/month Much better than hours
+Fuel heating Fuel quantity purchased per month or
+year
+Hours alone cannot calculate
+emissions
+Electricity billDoes the bill amount include non-
+electricity charges?
+Prevents bad rand-to-kWh
+conversions
+Water bill Is water consumption in kL already
+printed on the bill?
+Usually better than converting the
+rand amount
+19. VARIABLES THE LLM SHOULD RECEIVE BUT
+THE CALCULATOR SHOULD NOT FORCE INTO
+NUMERICAL EMISSIONS
+These variables are still useful:
+garden irrigation
+pool ownership
+home size
+shopping habits
+renewable technology type
+backup battery type
+whole-home versus essential-load backup
+21
+--- page 22 ---
+province
+municipality
+calculation confidence
+These are valuable context variables for recommendations.
+For example, the LLM can reason:
+The household has high water use + a swimming pool
+→ investigate pool covers and evaporation losses
+High electricity + electric geyser
+→ prioritise geyser optimisation or heat-pump analysis
+High transport carbon + low vehicle occupancy
+→ suggest carpooling
+High flight footprint
+→ prioritise avoiding one flight before discussing small household changes
+This is a better use of the LLM than asking it to invent exact numerical conversions for categories where
+the app did not collect enough data.
+20. RECOMMENDED FINAL SYSTEM
+ARCHITECTURE
+Stage 1 — Collect raw user inputs
+Example:
+{
+"household_size": 4,
+"water_kL_month": 18,
+"electricity_kWh_month": 550,
+"solar_share": 20,
+"vehicle_km_year": 15000,
+"vehicle_efficiency_L100km": 7.2,
+"fuel": "petrol",
+"diet": "vegetarian"
+}
+Stage 2 — Python performs all deterministic calculations
+Example:
+22
+--- page 23 ---
+{
+"water_L_person_day": 123.3,
+"electricity_CO2e_year": 5979.6,
+"vehicle_CO2e_year": 2542.0,
+"diet_CO2e_year": 1390.7,
+"gross_CO2e_year": 9912.3
+}
+The numbers above are illustrative examples of structure, not a complete footprint calculation.
+Stage 3 — Send calculated results and context to the LLM
+Prompt structure:
+You are an environmental sustainability advisor.
+Do not recalculate the user's footprint.
+Use the deterministic results supplied below.
+Your tasks are to:
+1. Explain the user's results clearly.
+2. Identify the largest contributors.
+3. Compare the user's behaviour with the supplied benchmarks.
+4. Recommend the three to five highest-impact realistic improvements.
+5. Estimate potential savings only when sufficient calculation data is 
+supplied.
+6. Distinguish between high-confidence measured results and low-confidence 
+estimates.
+7. Do not invent missing numerical data.
+8. Prioritise major changes over trivial actions.
+USER RESULTS:
+{calculated_results_json}
+21. SUMMARY OF WHAT SHOULD ACTUALLY BE
+NUMERIC IN THE MVP
+Definitely calculate numerically
+Actual water consumption
+Water use per person
+Shower water estimate
+Actual electricity consumption
+• 
+• 
+• 
+• 
+23
+--- page 24 ---
+Grid electricity carbon
+Generator emissions
+Personal vehicle emissions
+Public transport proxy emissions
+Flight emissions
+Fuel-based heating emissions
+Diet proxy footprint
+Food-waste adjustment
+Carbon offsets
+Gross and net carbon footprint
+Keep qualitative or contextual for now
+Garden irrigation when only yes/no is known
+Swimming pool when only yes/no is known
+Shopping habits
+Home size by itself
+Wood heating unless a suitable lifecycle methodology is selected
+Battery manufacturing impact
+Solar-panel manufacturing impact
+This boundary keeps the first version of the program relatively simple while preventing the app from
+generating numbers that appear precise but are actually based on weak assumptions.
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+24
