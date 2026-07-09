@@ -45,19 +45,21 @@ GEMINI_MODEL = "gemini-2.5-flash"   # free-tier, vision + JSON capable
 AVATAR_MODEL = "gemini-2.5-flash-image"   # image generation ("nano banana")
 
 # Canonical avatar-generation spec (spec §12). Sent verbatim to the image model.
-_AVATAR_PROMPT = """Create a stylised cartoon or illustrated avatar based on the uploaded person's likeness.
+_AVATAR_PROMPT = """Turn the uploaded photo into a stylised illustrated portrait avatar in this EXACT house style:
 
-Preserve the person's core recognisable characteristics: face shape, skin tone, hair colour, hairstyle, glasses, and distinctive visible accessories.
+STYLE — a semi-realistic digital painting (NOT a photo, NOT a flat/cartoon vector). Smooth, soft painterly shading with clean edges, gentle even lighting, warm natural skin tones and subtle rosy cheeks. Polished and lifelike but clearly hand-illustrated, like a high-quality editorial character portrait.
 
-Do not create a photorealistic image. Use a clean, modern flat-illustration or lightly shaded digital-art style with rounded forms, clean silhouettes, soft shading, a warm expression and strong readability at small sizes.
+LIKENESS — keep the person unmistakably recognisable: the SAME face shape, skin tone, eye colour, eyebrows, nose and mouth, the SAME hairstyle and hair colour, and any facial hair or glasses. ALSO keep the SAME clothing they are wearing in the photo (for example a scarf, jacket, top or collar) in its real colours. Give a friendly, calm, subtle closed-mouth smile.
 
-Crop: head and shoulders, centred, facing forward or in a subtle 3/4 view.
-Expression: friendly, neutral-to-positive, a subtle natural smile.
-Output: a square 1:1 image, transparent or simple brand-compatible background, no text, no watermark, no logo.
+COMPOSITION — head and shoulders, centred, facing forward, filling most of the frame. Square 1:1 image.
 
-Do not alter apparent age, ethnicity, body type, or recognisable facial identity.
+BACKGROUND (identical every time) — a smooth green gradient, deeper green at the edges fading to a lighter warm green, with a soft pale circular halo glow directly behind the head like a gentle rising sun. Behind the shoulders, add one or two soft, simple, slightly translucent green leaf sprigs (small stems with a few leaves) placed symmetrically as quiet decoration.
 
-The visual style should be friendly and ecological — clean rounded vector shapes with a soft, optimistic, nature-adjacent palette (leafy greens, sky blues, warm neutrals), consistent with a modern environmental app."""
+SIGNATURE DETAIL — add a single small bright-green two-leaf sprout pin/badge on the person's chest or collar (a little seedling emblem).
+
+Warm, optimistic, ecological mood. No text, no words, no watermark, no logo, no border.
+
+Do not alter the person's apparent age, ethnicity, gender, body type or facial identity — this must clearly be the same person, just illustrated."""
 
 _anthropic_client = None
 _anthropic_error = None
@@ -1231,6 +1233,29 @@ def avatar_generation_ready():
     return _gemini_available()
 
 
+def _square_png(data):
+    """Centre-crop the model's image to a 1:1 square PNG so every avatar
+    matches the house style (the reference avatars are square) and displays
+    cleanly in the app's circular frame. The image model tends to mirror the
+    input photo's aspect ratio, so a landscape selfie yields a landscape
+    render — this normalises it. Falls back to the raw bytes if Pillow is
+    unavailable or anything goes wrong (never returns a broken avatar)."""
+    try:
+        import io
+        from PIL import Image
+        im = Image.open(io.BytesIO(data)).convert("RGB")
+        w, h = im.size
+        if w != h:
+            s = min(w, h)
+            left, top = (w - s) // 2, (h - s) // 2
+            im = im.crop((left, top, left + s, top + s))
+        buf = io.BytesIO()
+        im.save(buf, format="PNG")
+        return buf.getvalue()
+    except Exception:  # noqa: BLE001 — formatting is best-effort
+        return data
+
+
 def generate_avatar(image_bytes, mime_type="image/png"):
     """Turn an uploaded photo into a stylised illustrated avatar (spec §12),
     using the canonical prompt. Returns (ok, png_bytes | friendly_message).
@@ -1257,7 +1282,7 @@ def generate_avatar(image_bytes, mime_type="image/png"):
             for part in (getattr(content, "parts", None) or []):
                 inline = getattr(part, "inline_data", None)
                 if inline and getattr(inline, "data", None):
-                    return True, inline.data
+                    return True, _square_png(inline.data)
         return False, ("The avatar service didn't return an image this time — "
                        "your current avatar is unchanged. Try another photo.")
     except Exception as exc:  # noqa: BLE001 — never crash the profile page
