@@ -219,38 +219,55 @@ def _get_gemini_client():
 # ===========================================================================
 
 def _save_secret(name, value):
-    root = os.path.dirname(os.path.abspath(__file__))
-    sdir = os.path.join(root, ".streamlit")
-    os.makedirs(sdir, exist_ok=True)
-    path = os.path.join(sdir, "secrets.toml")
-    lines = []
-    if os.path.exists(path):
-        with open(path, encoding="utf-8") as fh:
-            lines = [l for l in fh.read().splitlines()
-                     if not l.strip().startswith(name)]
-    lines.append(f'{name} = "{value}"')
-    with open(path, "w", encoding="utf-8") as fh:
-        fh.write("\n".join(lines) + "\n")
+    """Try to persist a key to the git-ignored local secrets.toml so it
+    survives restarts. Returns True on success. On a read-only filesystem
+    (e.g. Streamlit Community Cloud) writing is impossible — return False
+    instead of raising, so the caller can fall back to session-only use."""
+    try:
+        root = os.path.dirname(os.path.abspath(__file__))
+        sdir = os.path.join(root, ".streamlit")
+        os.makedirs(sdir, exist_ok=True)
+        path = os.path.join(sdir, "secrets.toml")
+        lines = []
+        if os.path.exists(path):
+            with open(path, encoding="utf-8") as fh:
+                lines = [l for l in fh.read().splitlines()
+                         if not l.strip().startswith(name)]
+        lines.append(f'{name} = "{value}"')
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(lines) + "\n")
+        return True
+    except OSError:
+        return False
+
+
+def _key_saved_message(provider, persisted):
+    if persisted:
+        return f"{provider} key saved and activated."
+    # Hosted (read-only) environment: the key works now but won't survive a
+    # reboot. Point the user at the durable place to put it.
+    return (f"{provider} key activated for this session. This hosted app "
+            "can't save it to disk — to keep it after a restart, add it under "
+            "Manage app → Settings → Secrets in Streamlit Cloud.")
 
 
 def save_api_key(key):
-    """Persist an API key locally (git-ignored secrets.toml) and activate it
-    this run. Provider is auto-detected from the key prefix.
-    Returns (ok, message)."""
+    """Activate an API key this run and persist it locally where possible.
+    Provider is auto-detected from the key prefix. Returns (ok, message)."""
     key = (key or "").strip().strip('"').strip("'")
     if key.startswith("sk-ant-"):
-        _save_secret("ANTHROPIC_API_KEY", key)
+        # Activate first (always works); persisting is best-effort.
         os.environ["ANTHROPIC_API_KEY"] = key
+        persisted = _save_secret("ANTHROPIC_API_KEY", key)
         reset_clients()
-        return True, ("Anthropic (Claude) key saved to "
-                      ".streamlit/secrets.toml and activated.")
+        return True, _key_saved_message("Anthropic (Claude)", persisted)
     # Google AI Studio keys: legacy "AIza…" and current "AQ.…" formats.
     if key.startswith("AIza") or key.startswith("AQ."):
-        _save_secret("GEMINI_API_KEY", key)
         os.environ["GEMINI_API_KEY"] = key
+        persisted = _save_secret("GEMINI_API_KEY", key)
         reset_clients()
-        return True, ("Google Gemini key saved to .streamlit/secrets.toml and "
-                      "activated — you're on the free tier.")
+        msg = _key_saved_message("Google Gemini", persisted)
+        return True, (msg + " You're on the free tier." if persisted else msg)
     return False, ("That key isn't recognised. Anthropic keys start with "
                    "sk-ant-; Google Gemini keys start with AQ. or AIza. Paste "
                    "one of those.")
