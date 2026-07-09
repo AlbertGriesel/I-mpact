@@ -14,8 +14,15 @@ import json
 import streamlit as st
 
 import database as db
+import avatar as av
 from views.common import current_user
-from visuals import pill, icon, score_ring
+from visuals import pill, icon, score_ring, env_tier
+
+
+def _face(u, size=34, animate=False, halo=False, score=None):
+    """Inline Sprout for community lists/dialogs (replaces the old emoji)."""
+    return av.svg(av.config_from_user(u), tier=env_tier(score), size=size,
+                  animate=animate, halo=halo)
 
 _RANKS = {
     "Improvement": ("improvement", True, lambda v: f"−{v:.0f}%",
@@ -61,8 +68,11 @@ def _member_rows():
 @st.dialog("Community story")
 def _story_dialog(story, author):
     st.markdown(f"### {story['title']}")
-    st.caption(f"by {author['avatar']} {author['display_name']} · "
-               f"{story.get('period') or ''}")
+    st.markdown(
+        f"<div style='display:flex;align-items:center;gap:.4rem'>"
+        f"{_face(author, 26)}<span style='color:#5c7069;font-size:.9rem'>by "
+        f"{author['display_name']} · {story.get('period') or ''}</span></div>",
+        unsafe_allow_html=True)
     st.markdown(f"**The challenge:** {story['challenge']}")
     st.markdown(f"**What they did:** {story['actions']}")
     stats = story.get("stats") or {}
@@ -81,7 +91,8 @@ def _story_dialog(story, author):
 @st.dialog("Member profile")
 def _profile_dialog(row):
     u = row["user"]
-    st.markdown(f"<div style='font-size:3rem;text-align:center'>{u['avatar']}"
+    st.markdown(f"<div style='display:flex;justify-content:center'>"
+                f"{_face(u, 96, animate=True, halo=True, score=row.get('score'))}"
                 f"</div>", unsafe_allow_html=True)
     st.markdown(f"<div style='text-align:center;font-weight:800;"
                 f"font-size:1.2rem;color:#1B5E3B'>{u['display_name']}</div>",
@@ -176,15 +187,37 @@ def render_leaderboard():
         with st.container(border=True):
             c1, c2, c3, c4 = st.columns([0.5, 2.6, 1.6, 1.1])
             with c1:
-                if row.get(key) is not None and i < 3:
-                    st.markdown(icon("trophy", 24, _MEDAL_COLORS[i]),
-                                unsafe_allow_html=True)
-                elif row.get(key) is not None:
-                    st.markdown(f"<div style='font-weight:800;color:#9bb0a8;"
-                                f"font-size:1.1rem'>{i + 1}</div>",
-                                unsafe_allow_html=True)
+                # Rank number derives from the current sorted order, so it
+                # updates whenever Rank By / sorting changes (§3). Top 3 get a
+                # subtle medal badge; the rest get a plain number; unranked
+                # (story-only) members show a dash.
+                if row.get(key) is not None:
+                    rank = i + 1
+                    if rank <= 3:
+                        c = _MEDAL_COLORS[rank - 1]
+                        st.markdown(
+                            f"<div style='display:flex;align-items:center;"
+                            f"justify-content:center;width:34px;height:34px;"
+                            f"border-radius:50%;background:{c}22;"
+                            f"border:2px solid {c};color:{c};font-weight:800;"
+                            f"font-size:1rem'>{rank}</div>",
+                            unsafe_allow_html=True)
+                    else:
+                        st.markdown(
+                            f"<div style='width:34px;text-align:center;"
+                            f"font-weight:800;color:#7d8f88;font-size:1.05rem'>"
+                            f"{rank}</div>", unsafe_allow_html=True)
+                else:
+                    st.markdown(
+                        "<div style='width:34px;text-align:center;"
+                        "color:#c3cdc8' title='Not ranked — shared a story "
+                        "only'>—</div>", unsafe_allow_html=True)
             with c2:
-                st.markdown(f"**{u['avatar']} {u['display_name']}**")
+                st.markdown(
+                    f"<div style='display:flex;align-items:center;gap:.5rem'>"
+                    f"{_face(u, 34, score=row.get('score'))}"
+                    f"<span style='font-weight:800;color:#1B5E3B'>"
+                    f"{u['display_name']}</span></div>", unsafe_allow_html=True)
                 st.markdown("".join(_member_pills(row)),
                             unsafe_allow_html=True)
             with c3:
@@ -240,8 +273,8 @@ def render_explore():
         with cols[i % 3], st.container(border=True):
             st.markdown(
                 f"<div style='display:flex;align-items:center;gap:.6rem'>"
-                f"<span style='font-size:2rem;line-height:1'>{u['avatar']}"
-                f"</span><span style='font-weight:800;color:#1B5E3B;"
+                f"{_face(u, 40, score=row.get('score'))}"
+                f"<span style='font-weight:800;color:#1B5E3B;"
                 f"overflow:hidden;text-overflow:ellipsis;white-space:nowrap'>"
                 f"{u['display_name']}</span></div>",
                 unsafe_allow_html=True)

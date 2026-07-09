@@ -33,6 +33,8 @@ def _clear_bill_values(data):
 
 
 def _upload_path(data):
+    from views.common import privacy_note
+    privacy_note("upload")
     note = ai.provider_privacy_note()
     if note:
         st.caption(note)

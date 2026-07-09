@@ -35,16 +35,69 @@ OPTIONS = {
     "food_waste": ["None", "Very little", "Around 10%", "Around 20%",
                    "More than 30%"],
     "shopping_habits": ["Much less", "Less", "Average", "More", "Much more"],
+    # ---- account type + business ------------------------------------------
+    "account_type": ["personal", "business"],
+    "business_sector": [
+        "Office / professional services",
+        "Retail / wholesale",
+        "Restaurant / café / hospitality",
+        "Manufacturing / industrial",
+        "Agriculture / farming",
+        "Warehouse / logistics",
+        "Education",
+        "Healthcare",
+        "Construction",
+        "IT / data / software",
+        "Other",
+    ],
+    "fleet_fuel": ["petrol", "diesel", "electric"],
+    "fleet_vehicle_type": ["Car / bakkie", "Van / light commercial",
+                           "Truck / heavy", "Motorcycle", "Other"],
 }
 
 
-def default_assessment():
+# Which conditional categories apply to a business sector. Single source of
+# truth for the manual form, the chat conversation AND the calculator, so all
+# three ask the same sector-appropriate questions (spec §5 conditional logic).
+def business_sector_flags(sector):
+    s = sector or "Office / professional services"
+    return {
+        "refrigeration": s in ("Retail / wholesale",
+                               "Restaurant / café / hospitality",
+                               "Agriculture / farming", "Healthcare"),
+        "food_waste": s in ("Restaurant / café / hospitality",
+                            "Retail / wholesale"),
+        "process_water": s in ("Manufacturing / industrial",
+                               "Agriculture / farming", "Healthcare",
+                               "Restaurant / café / hospitality"),
+        "irrigation": s in ("Agriculture / farming", "Education"),
+        "machinery": s in ("Manufacturing / industrial", "Construction",
+                           "Agriculture / farming", "Warehouse / logistics"),
+        "servers": s in ("IT / data / software", "Office / professional services"),
+        # a fleet question is offered to every business (optional), but is
+        # foregrounded for these movement-heavy sectors:
+        "fleet_prominent": s in ("Warehouse / logistics", "Construction",
+                                 "Agriculture / farming", "Retail / wholesale"),
+    }
+
+
+def default_assessment(account_type="personal"):
     """Empty assessment. None means 'not provided'; the engine falls back
-    down the data-priority ladder for anything missing."""
+    down the data-priority ladder for anything missing.
+
+    account_type "business" returns the business-shaped structure. Both shapes
+    keep the SAME section keys (general/water/electricity/transport/lifestyle)
+    so the ONE deterministic engine runs on either without forking — business
+    simply adds a `business` section and business fields in `general`, and the
+    engine branches only where the arithmetic genuinely differs (normalisation
+    and which categories apply), never on the conversion factors themselves."""
+    if account_type == "business":
+        return default_business_assessment()
     return {
         "general": {
+            "account_type": "personal",
             "household_size": 1,
-            "country": "South Africa",
+            "country": "",           # unset → Province stays disabled (§3)
             "region": "",
             "municipality": "",
         },
@@ -144,6 +197,130 @@ def default_flight():
             "trips_per_year": 1}
 
 
+def default_fleet_vehicle():
+    return {"vehicle_type": "Car / bakkie", "fuel": "diesel", "count": 1,
+            "annual_km_each": None, "l_per_100km": None, "kwh_per_km": None}
+
+
+def default_business_assessment():
+    """Business-shaped assessment. Reuses water/electricity/transport for the
+    metered quantities (bills, kWh, kL, fuel — identical physics), and adds a
+    `business` section for the operations that only a business has (process
+    water, extra loads, fleet, waste). `lifestyle` is retained so the shared
+    engine never KeyErrors; diet is simply not counted for businesses."""
+    base = {
+        "general": {
+            "account_type": "business",
+            "household_size": 1,          # kept so per-capita helpers are safe
+            "country": "",               # unset → Province stays disabled (§3)
+            "region": "",
+            "municipality": "",
+            "business_name": "",
+            "sector": "Office / professional services",
+            "employees": None,
+            "premises_count": 1,
+            "floor_area_m2": None,
+            "operating_days_per_week": 5,
+            "operating_hours_per_day": 9,
+        },
+        # water / electricity reuse the personal fields (bill XOR manual, etc.)
+        "water": {
+            "water_kl_month": None,
+            "water_bill_rand": None,
+            "measured_source": None,
+            "bill_uploaded": False,
+            "uses_rainwater": False,
+            "rainwater_percentage": 0,
+            # personal-only estimation fields kept as None so the shared
+            # engine's .get() calls stay safe; the business path never uses them
+            "shower_minutes": None,
+            "showers_per_week": None,
+            "garden_irrigation": False,
+            "swimming_pool": False,
+        },
+        "electricity": {
+            "kwh_month": None,
+            "kwh_kind": "Grid import (bill / prepaid / meter)",
+            "bill_rand": None,
+            "measured_source": None,
+            "bill_uploaded": False,
+            "renewable_source": "None",
+            "renewable_percentage": 0,
+            "backup_power": "None",
+            "generator_fuel_type": "Diesel",
+            "generator_litres_per_month": None,
+            "generator_hours_per_month": None,
+            "generator_fuel_rate_l_per_hour": None,
+            "generator_coverage": "Essential loads only",
+            "backup_share_percent": 0,
+            "backup_charge_source": "Grid",
+            # personal appliance-estimate fields kept as safe defaults
+            "home_size": "",
+            "electric_geyser": False,
+            "geyser_hours_per_day": None,
+            "air_conditioner": False,
+            "aircon_kw": None,
+            "aircon_hours_per_day": None,
+            "aircon_months_per_year": None,
+            "electric_stove": False,
+            "stove_minutes_per_day": None,
+            "oven_hours_per_week": None,
+            "pool_pump": False,
+            "pool_pump_watts": None,
+            "pool_pump_hours_per_day": None,
+        },
+        "transport": {
+            "flights": [],          # business travel — same structure/engine
+            "fleet": [],            # business fleet vehicles (see calculate_fleet)
+            "vehicle": {            # kept so calculate_vehicle() returns 0 safely
+                "owns_vehicle": False, "manufacturer": "", "model": "",
+                "year": 2020, "annual_km": None, "average_passengers": 1,
+                "fuel_type": None, "l_per_100km": None, "kwh_per_km": None,
+            },
+            "public_transport": {"type": "None", "weekly_km": None},
+        },
+        "lifestyle": {
+            # heating can still apply to premises; diet is NOT counted for a
+            # business (skipped in calculate_carbon).
+            "heating_method": "None",
+            "heating_months_per_year": None,
+            "heating_hours_per_day": None,
+            "heater_watts": None,
+            "heating_lpg_litres_per_year": None,
+            "heating_gas_m3_per_year": None,
+            "heating_paraffin_litres_per_year": None,
+            "heating_coal_kg_per_year": None,
+            "heating_wood_kg_per_year": None,
+            "diet": "Average diet",     # present but unused for business
+            "food_waste": "None",
+            "shopping_habits": "Average",
+            "buys_offsets": False,
+            "offset_tonnes_per_year": None,
+        },
+        "business": {
+            # water extras
+            "process_water_kl_month": None,   # production / process water
+            "irrigation": False,
+            "irrigation_kl_month": None,
+            "recycled_water_percent": 0,      # reused / recycled share
+            "customers_per_day": None,        # visitor volume (context only)
+            # electricity extras (context + estimation aids)
+            "refrigeration": False,
+            "refrigeration_units": None,
+            "has_machinery": False,
+            "machinery_kwh_month": None,
+            "server_load": False,
+            "server_kwh_month": None,
+            # waste & operations
+            "waste_kg_month": None,
+            "recycles": False,
+            "recycling_percent": 0,
+            "food_waste_kg_month": None,      # hospitality / retail
+        },
+    }
+    return base
+
+
 # --------------------------------------------------------------------------
 # Validation and merging (used by the AI conversation and bill extraction)
 # --------------------------------------------------------------------------
@@ -180,9 +357,28 @@ _NUMERIC_BOUNDS = {
     ("lifestyle", "heating_coal_kg_per_year"): (0, 20000),
     ("lifestyle", "heating_wood_kg_per_year"): (0, 20000),
     ("lifestyle", "offset_tonnes_per_year"): (0, 1000),
+    # business general
+    ("general", "employees"): (1, 1_000_000),
+    ("general", "premises_count"): (1, 10_000),
+    ("general", "floor_area_m2"): (1, 5_000_000),
+    ("general", "operating_days_per_week"): (1, 7),
+    ("general", "operating_hours_per_day"): (1, 24),
+    # business operations
+    ("business", "process_water_kl_month"): (0, 5_000_000),
+    ("business", "irrigation_kl_month"): (0, 5_000_000),
+    ("business", "recycled_water_percent"): (0, 100),
+    ("business", "customers_per_day"): (0, 5_000_000),
+    ("business", "refrigeration_units"): (0, 100_000),
+    ("business", "machinery_kwh_month"): (0, 50_000_000),
+    ("business", "server_kwh_month"): (0, 50_000_000),
+    ("business", "waste_kg_month"): (0, 50_000_000),
+    ("business", "recycling_percent"): (0, 100),
+    ("business", "food_waste_kg_month"): (0, 50_000_000),
 }
 
 _ENUM_FIELDS = {
+    ("general", "account_type"): "account_type",
+    ("general", "sector"): "business_sector",
     ("electricity", "renewable_source"): "renewable_source",
     ("electricity", "backup_power"): "backup_power",
     ("electricity", "generator_fuel_type"): "generator_fuel_type",
@@ -224,13 +420,100 @@ def _coerce(section, field, value, current):
     return value
 
 
+def _merge_location(general, incoming):
+    """Validate and merge location fields (country/region/municipality) from an
+    AI/chat update into `general`, using the SAME canonical rules as the manual
+    picker (locations.resolve_location). Returns (applied, rejected).
+
+    Arbitrary strings are never stored: an unrecognised country/region/
+    municipality is rejected (and reported back so the assistant can re-ask),
+    and any downstream field invalidated by an upstream change is cleared to its
+    honest empty/fallback state rather than invented (spec §6)."""
+    import locations as loc
+    applied, rejected = [], []
+    before = (general.get("country", ""), general.get("region", ""),
+              general.get("municipality", ""))
+    country, region, municipality = before
+
+    if "country" in incoming:
+        raw = incoming["country"]
+        if raw in (None, ""):
+            country = ""
+            applied.append("general.country (cleared)")
+        else:
+            canon = loc.canonical_country(raw)
+            if canon:
+                country = canon
+                applied.append("general.country")
+            else:
+                rejected.append(
+                    f"general.country: '{raw}' is not a recognised country")
+
+    if "region" in incoming:
+        raw = incoming["region"]
+        if raw in (None, ""):
+            region = ""
+            applied.append("general.region (cleared)")
+        elif not country:
+            rejected.append("general.region: set a valid country first")
+        elif not loc.has_regions(country):
+            region = ""
+            rejected.append(
+                f"general.region: no regional data for {country} — "
+                "national figures will be used")
+        else:
+            canon = loc.canonical_region(country, raw)
+            if canon:
+                region = canon
+                applied.append("general.region")
+            else:
+                rejected.append(
+                    f"general.region: '{raw}' is not a valid "
+                    f"{loc.region_term(country)} for {country}")
+
+    if "municipality" in incoming:
+        raw = incoming["municipality"]
+        if raw in (None, ""):
+            municipality = ""
+            applied.append("general.municipality (cleared)")
+        elif not loc.has_municipalities(country, region):
+            municipality = ""
+            rejected.append(
+                "general.municipality: no municipality data available here — "
+                "regional/national figures will be used")
+        else:
+            canon = loc.canonical_municipality(country, region, raw)
+            if canon:
+                municipality = canon
+                applied.append("general.municipality")
+            else:
+                rejected.append(
+                    f"general.municipality: '{raw}' is not a recognised "
+                    "local authority")
+
+    # Cross-field cascade: an upstream change can invalidate a value we kept
+    # from before (e.g. a province that isn't valid for a newly-set country, or
+    # a municipality under a province the user just changed).
+    country, region, municipality = loc.resolve_location(
+        country, region, municipality)
+    if before[1] and not region and "region" not in incoming:
+        applied.append("general.region (cleared — no longer valid)")
+    if before[2] and not municipality and "municipality" not in incoming:
+        applied.append("general.municipality (cleared — no longer valid)")
+
+    general["country"], general["region"], general["municipality"] = (
+        country, region, municipality)
+    return applied, rejected
+
+
 def merge_updates(data, updates):
     """Merge a nested updates dict (as produced by the AI collection tool)
     into an assessment dict, validating every field.
 
     Returns (merged, applied, rejected) where applied/rejected are lists of
     human-readable strings. Unknown fields are rejected, never invented
-    (non-negotiable rule: the LLM may not invent values).
+    (non-negotiable rule: the LLM may not invent values). Location fields go
+    through the shared canonical validator (see _merge_location).
     """
     merged = copy.deepcopy(data)
     applied, rejected = [], []
@@ -243,6 +526,15 @@ def merge_updates(data, updates):
         if section not in merged or not isinstance(fields, dict):
             rejected.append(f"unknown section '{section}'")
             continue
+        if section == "general":
+            _loc_keys = ("country", "region", "municipality")
+            _loc_incoming = {k: fields[k] for k in _loc_keys if k in fields}
+            if _loc_incoming:
+                la, lr = _merge_location(merged["general"], _loc_incoming)
+                applied += la
+                rejected += lr
+                fields = {k: v for k, v in fields.items()
+                          if k not in _loc_keys}
         for field, value in fields.items():
             try:
                 if section == "transport" and field == "flights":
@@ -259,6 +551,28 @@ def merge_updates(data, updates):
                         flights.append(nf)
                     merged["transport"]["flights"] = flights
                     applied.append(f"flights ({len(flights)} route(s))")
+                elif section == "transport" and field == "fleet":
+                    if "fleet" not in merged["transport"]:
+                        rejected.append("fleet is only for business accounts")
+                        continue
+                    fleet = []
+                    for f in (value or []):
+                        nf = default_fleet_vehicle()
+                        vt = str(f.get("vehicle_type", "Car / bakkie")).strip()
+                        nf["vehicle_type"] = next(
+                            (o for o in OPTIONS["fleet_vehicle_type"]
+                             if o.lower() == vt.lower()), "Car / bakkie")
+                        fuel = str(f.get("fuel", "diesel")).strip().lower()
+                        nf["fuel"] = fuel if fuel in OPTIONS["fleet_fuel"] else "diesel"
+                        nf["count"] = max(1, min(100000, int(f.get("count", 1) or 1)))
+                        for k in ("annual_km_each", "l_per_100km", "kwh_per_km"):
+                            if f.get(k) is not None:
+                                fv = float(f[k])
+                                if 0 <= fv <= 5_000_000:
+                                    nf[k] = fv
+                        fleet.append(nf)
+                    merged["transport"]["fleet"] = fleet
+                    applied.append(f"fleet ({len(fleet)} vehicle type(s))")
                 elif section == "transport" and field in ("vehicle", "public_transport"):
                     sub = merged["transport"][field]
                     for k, v in (value or {}).items():
@@ -317,6 +631,9 @@ def missing_important_fields(data):
     conversation must stop once this list is empty or only optional items
     remain.
     """
+    if data["general"].get("account_type") == "business":
+        return _missing_business_fields(data)
+
     missing = []
     g, w, e, t, l = (data["general"], data["water"], data["electricity"],
                      data["transport"], data["lifestyle"])
@@ -404,17 +721,93 @@ def missing_important_fields(data):
     return missing
 
 
+def _missing_business_fields(data):
+    """Business version of the conditional gaps — sector-driven (spec §5), so
+    a restaurant is asked about refrigeration/food waste while an office is
+    not. Same shape as the personal list; drives both the manual form's
+    conditional sections and the AI conversation."""
+    missing = []
+    g, w, e, t = (data["general"], data["water"], data["electricity"],
+                  data["transport"])
+    b = data.get("business", {})
+    flags = business_sector_flags(g.get("sector"))
+
+    # --- business context (needed for fair per-employee / per-m² views)
+    if not g.get("sector"):
+        missing.append(("general.sector", "What sector or industry is the business in?"))
+    if not g.get("employees"):
+        missing.append(("general.employees", "Roughly how many employees / staff?"))
+    if not g.get("floor_area_m2"):
+        missing.append(("general.floor_area_m2",
+                        "Approximate floor area of the premises in square metres "
+                        "(a rough estimate is fine)."))
+
+    # --- water: measured beats sector estimate
+    if w.get("water_kl_month") is None and w.get("water_bill_rand") is None:
+        missing.append(("water.water_kl_month",
+                        "Monthly business water use in kilolitres (from a bill/meter), "
+                        "or the monthly water bill amount in rand — or say you don't know."))
+    if flags["process_water"] and b.get("process_water_kl_month") is None:
+        missing.append(("business.process_water_kl_month",
+                        "Roughly how much water per month goes to production / "
+                        "processing (kL), separate from general use?"))
+    if w.get("uses_rainwater") and not w.get("rainwater_percentage"):
+        missing.append(("water.rainwater_percentage",
+                        "Approximate % of water supplied from rainwater harvesting."))
+
+    # --- electricity: measured beats sector estimate
+    if e.get("kwh_month") is None and e.get("bill_rand") is None:
+        missing.append(("electricity.kwh_month",
+                        "Monthly electricity in kWh (bill/meter), or the monthly "
+                        "spend in rand — or say you don't know."))
+    if e.get("renewable_source", "None") != "None" and not e.get("renewable_percentage"):
+        missing.append(("electricity.renewable_percentage",
+                        "Approximate % of electricity from your solar / renewable source."))
+    if e.get("backup_power") == "Generator" and \
+            e.get("generator_litres_per_month") is None and \
+            e.get("generator_hours_per_month") is None:
+        missing.append(("electricity.generator_litres_per_month",
+                        "Backup generator fuel: litres in a typical month "
+                        "(or run-hours/month if litres unknown)."))
+
+    # --- fleet (foregrounded for movement-heavy sectors, optional otherwise)
+    fleet = t.get("fleet") or []
+    if flags["fleet_prominent"] and not fleet:
+        missing.append(("transport.fleet",
+                        "Company vehicles: for each type, how many, the fuel, and "
+                        "roughly the km each travels per year."))
+    for i, fv in enumerate(fleet):
+        if fv.get("annual_km_each") is None:
+            missing.append((f"transport.fleet[{i}].annual_km_each",
+                            f"About how many km/year does each "
+                            f"{fv.get('vehicle_type', 'vehicle').lower()} travel?"))
+
+    # --- waste & operations
+    if b.get("waste_kg_month") is None and b.get("recycles") is None:
+        missing.append(("business.waste_kg_month",
+                        "Roughly how much general waste per month (kg), and do you recycle?"))
+    if flags["food_waste"] and b.get("food_waste_kg_month") is None:
+        missing.append(("business.food_waste_kg_month",
+                        "Roughly how much food waste per month (kg)?"))
+    return missing
+
+
 def is_calculable(data):
-    """Minimum meaningful data: household size known and each metric can at
-    least fall back to a defensible method. Water and electricity always have
-    national/appliance fallbacks, so household size is the true gate; we also
-    require diet (defaulted) which is always present."""
-    return bool(data["general"].get("household_size"))
+    """Minimum meaningful data to run the engine.
+
+    Personal: household size is the gate (water/electricity/diet all have
+    fallbacks). Business: a sector plus at least one size measure (employees or
+    floor area) lets every metric fall back to a defensible sector estimate."""
+    g = data["general"]
+    if g.get("account_type") == "business":
+        return bool(g.get("sector") and (g.get("employees") or g.get("floor_area_m2")))
+    return bool(g.get("household_size"))
 
 
 def completeness(data):
     """Rough % of the important questions answered — for progress UI."""
-    total_gaps = len(missing_important_fields(default_assessment()))
+    account_type = data["general"].get("account_type", "personal")
+    total_gaps = len(missing_important_fields(default_assessment(account_type)))
     now_gaps = len(missing_important_fields(data))
     if total_gaps == 0:
         return 100

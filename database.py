@@ -122,6 +122,26 @@ def init_db():
                 conn.execute("PRAGMA table_info(assessments)").fetchall()]
         if "ai_eval" not in cols:
             conn.execute("ALTER TABLE assessments ADD COLUMN ai_eval TEXT")
+        # UI preferences: theme (light|dark) and interface language
+        ucols = [r["name"] for r in
+                 conn.execute("PRAGMA table_info(users)").fetchall()]
+        if "theme" not in ucols:
+            conn.execute("ALTER TABLE users ADD COLUMN theme TEXT NOT NULL "
+                         "DEFAULT 'light'")
+        if "language" not in ucols:
+            conn.execute("ALTER TABLE users ADD COLUMN language TEXT NOT NULL "
+                         "DEFAULT 'en'")
+        # account type: 'personal' | 'business' (spec §4)
+        if "account_type" not in ucols:
+            conn.execute("ALTER TABLE users ADD COLUMN account_type TEXT NOT "
+                         "NULL DEFAULT 'personal'")
+        # avatar source: 'sprout' (procedural character) | 'photo' (generated
+        # from an uploaded photo, spec §12), and the private file path
+        if "avatar_mode" not in ucols:
+            conn.execute("ALTER TABLE users ADD COLUMN avatar_mode TEXT NOT "
+                         "NULL DEFAULT 'sprout'")
+        if "avatar_photo" not in ucols:
+            conn.execute("ALTER TABLE users ADD COLUMN avatar_photo TEXT")
 
 
 def _now():
@@ -142,15 +162,15 @@ def hash_password(password, salt_hex=None):
 
 def create_user(email, display_name, password, privacy="private",
                 reminder_cadence="weekly", country="South Africa",
-                avatar="🌱", is_demo=0):
+                avatar="🌱", is_demo=0, account_type="personal"):
     pw_hash, salt = hash_password(password)
     with _connect() as conn:
         cur = conn.execute(
             "INSERT INTO users (email, display_name, pw_hash, salt, created_at,"
-            " privacy, reminder_cadence, country, avatar, is_demo)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?)",
+            " privacy, reminder_cadence, country, avatar, is_demo, account_type)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             (email.strip().lower(), display_name.strip(), pw_hash, salt, _now(),
-             privacy, reminder_cadence, country, avatar, is_demo))
+             privacy, reminder_cadence, country, avatar, is_demo, account_type))
         user_id = cur.lastrowid
         conn.execute("INSERT INTO streaks (user_id, cadence) VALUES (?, ?)",
                      (user_id, reminder_cadence))
@@ -181,7 +201,8 @@ def verify_login(email, password):
 def update_user(user_id, **fields):
     allowed = {"display_name", "privacy", "public_fields", "story_consent",
                "reminder_cadence", "reminders_enabled", "unit_period",
-               "avatar", "country"}
+               "avatar", "country", "theme", "language", "account_type",
+               "avatar_mode", "avatar_photo"}
     sets, vals = [], []
     for k, v in fields.items():
         if k in allowed:
@@ -197,6 +218,23 @@ def update_user(user_id, **fields):
         if "reminder_cadence" in fields:
             conn.execute("UPDATE streaks SET cadence=? WHERE user_id=?",
                          (fields["reminder_cadence"], user_id))
+
+
+def save_avatar_photo(user_id, png_bytes):
+    """Persist a generated avatar image privately and switch the user to photo
+    mode (spec §12). Returns the stored path."""
+    folder = os.path.join(UPLOAD_DIR, "avatars")
+    os.makedirs(folder, exist_ok=True)
+    path = os.path.join(folder, f"{user_id}.png")
+    with open(path, "wb") as fh:
+        fh.write(png_bytes)
+    update_user(user_id, avatar_mode="photo", avatar_photo=path)
+    return path
+
+
+def use_sprout_avatar(user_id):
+    """Switch back to the procedural Sprout character."""
+    update_user(user_id, avatar_mode="sprout")
 
 
 def public_users():
@@ -484,46 +522,96 @@ def user_bills(user_id):
 
 # ------------------------------------------------------------ demo community
 
+# Default set of stats a fully-open demo profile shares publicly.
+_FULL_PUBLIC_FIELDS = ["score", "water", "electricity", "carbon", "streak",
+                       "achievements"]
+
+# Demo community members. Every number is produced by the REAL calculation
+# engine, and achievements are awarded by the REAL achievement rules, so the
+# leaderboard, Explore and stories stay internally consistent. The set is a
+# plausible spread — strong improvers, a high-footprint household that is
+# barely moving, a private-but-storied member, and short/long streaks — so
+# sorting, browsing, search and badge states are all demonstrable. Demo
+# accounts are is_demo=1 with random passwords and can never sign in.
+_DEMO_PROFILES = [
+    {"email": "thandi.demo@impact.app", "name": "Thandi (demo)",
+     "avatar": "🌻", "kwh": [520, 470, 430, 395, 370, 350],
+     "water_kl": [16.0, 14.5, 13.0, 12.5, 11.8, 11.2], "hh": 4,
+     "diet": "Average diet", "km": 12000,
+     "story": ("Cutting our geyser bill in half",
+               "Loadshedding made us look hard at the geyser and pool pump.",
+               "Geyser timer, pool pump down to 4 hours, shorter showers.",
+               "6 months")},
+    {"email": "sipho.demo@impact.app", "name": "Sipho (demo)",
+     "avatar": "🌳", "kwh": [610, 600, 560, 540, 500, 480],
+     "water_kl": [22.0, 21.0, 20.0, 19.0, 18.5, 18.0], "hh": 5,
+     "diet": "Mostly chicken", "km": 18000,
+     "story": ("From two cars to one plus the taxi",
+               "Fuel costs and a long commute across Joburg.",
+               "Car pooling twice a week and the minibus taxi for short trips.",
+               "4 months")},
+    {"email": "anika.demo@impact.app", "name": "Anika (demo)",
+     "avatar": "🌿", "kwh": [340, 330, 310, 300, 285, 275],
+     "water_kl": [9.5, 9.0, 8.8, 8.5, 8.2, 8.0], "hh": 2,
+     "diet": "Vegetarian", "km": 8000, "story": None},
+    # long streak, but shares only a few fields publicly
+    {"email": "lerato.demo@impact.app", "name": "Lerato (demo)",
+     "avatar": "🐝", "fields": ["score", "streak", "achievements"],
+     "kwh": [700, 680, 655, 635, 615, 600, 580, 560, 545, 525, 505, 485],
+     "water_kl": [21.0, 20.5, 20.0, 19.5, 19.0, 18.5, 18.0, 17.5, 17.0,
+                  16.5, 16.0, 15.5], "hh": 4, "diet": "Average diet",
+     "km": 15000, "story": None},
+    # high footprint, essentially flat — not everyone is a star performer
+    {"email": "johan.demo@impact.app", "name": "Johan (demo)",
+     "avatar": "⛰️", "kwh": [780, 795, 770, 785],
+     "water_kl": [27.0, 28.0, 26.5, 27.0], "hh": 3,
+     "diet": "Heavy meat eater", "km": 28000, "story": None},
+    # PRIVATE profile that has deliberately published a story (story-only)
+    {"email": "fatima.demo@impact.app", "name": "Fatima (demo)",
+     "avatar": "🦉", "privacy": "private", "kwh": [450, 435, 420, 405, 395],
+     "water_kl": [13.0, 12.6, 12.2, 11.8, 11.4], "hh": 3,
+     "diet": "Pescatarian", "km": 9000,
+     "story": ("A private home, a public lesson",
+               "We keep our profile private but wanted to share what worked.",
+               "Solar geyser and LED everything — the bill halved in a year.",
+               "12 months")},
+    {"email": "kwame.demo@impact.app", "name": "Kwame (demo)",
+     "avatar": "🐬", "kwh": [500, 515, 505, 480, 465, 455, 445, 435],
+     "water_kl": [15.0, 15.4, 15.0, 14.0, 13.6, 13.2, 12.9, 12.6], "hh": 4,
+     "diet": "Mostly chicken", "km": 13000,
+     "story": ("Small steps, eight months running",
+               "No single big change — just steady habits.",
+               "Shorter showers, full laundry loads, walking the school run.",
+               "8 months")},
+    # low footprint, short streak, shares a narrow set of fields
+    {"email": "nomsa.demo@impact.app", "name": "Nomsa (demo)",
+     "avatar": "☀️", "fields": ["score", "achievements", "water"],
+     "kwh": [360, 352, 345], "water_kl": [10.5, 10.2, 10.0], "hh": 2,
+     "diet": "Vegan", "km": 5000, "story": None},
+]
+
+
 def seed_demo_data():
     """Create clearly-labelled demo community members so Explore, Stories and
-    the Leaderboard are meaningful on first run. Demo history is produced by
-    the real calculation engine so every number is consistent."""
-    if get_user_by_email("thandi.demo@impact.app"):
-        return
+    the Leaderboard are meaningful. Seeds each profile independently, so
+    profiles added to _DEMO_PROFILES appear on existing databases too, and
+    real accounts are never touched (demo users are is_demo=1, unsigninable)."""
     from schema import default_assessment
     from calculations import run_assessment
+    import achievements as ach
 
-    profiles = [
-        {"email": "thandi.demo@impact.app", "name": "Thandi (demo)",
-         "avatar": "🌻", "kwh": [520, 470, 430, 395, 370, 350],
-         "water_kl": [16.0, 14.5, 13.0, 12.5, 11.8, 11.2], "hh": 4,
-         "diet": "Average diet", "km": 12000,
-         "story": ("Cutting our geyser bill in half",
-                   "Loadshedding made us look hard at the geyser and pool pump.",
-                   "Geyser timer, pool pump down to 4 hours, shorter showers.",
-                   "6 months")},
-        {"email": "sipho.demo@impact.app", "name": "Sipho (demo)",
-         "avatar": "🌳", "kwh": [610, 600, 560, 540, 500, 480],
-         "water_kl": [22.0, 21.0, 20.0, 19.0, 18.5, 18.0], "hh": 5,
-         "diet": "Mostly chicken", "km": 18000,
-         "story": ("From two cars to one plus the taxi",
-                   "Fuel costs and a long commute across Joburg.",
-                   "Car pooling twice a week and the minibus taxi for short trips.",
-                   "4 months")},
-        {"email": "anika.demo@impact.app", "name": "Anika (demo)",
-         "avatar": "🌿", "kwh": [340, 330, 310, 300, 285, 275],
-         "water_kl": [9.5, 9.0, 8.8, 8.5, 8.2, 8.0], "hh": 2,
-         "diet": "Vegetarian", "km": 8000, "story": None},
-    ]
-
-    for p in profiles:
+    for p in _DEMO_PROFILES:
+        if get_user_by_email(p["email"]):
+            continue  # already seeded — don't duplicate
+        privacy = p.get("privacy", "public")
         user = create_user(p["email"], p["name"],
-                           secrets.token_urlsafe(16),  # random pw; demo users are display-only
-                           privacy="public", is_demo=1, avatar=p["avatar"])
-        update_user(user["id"], public_fields=["score", "water", "electricity",
-                                               "carbon", "streak", "achievements"],
+                           secrets.token_urlsafe(16),  # random pw; display-only
+                           privacy=privacy, is_demo=1, avatar=p["avatar"])
+        update_user(user["id"],
+                    public_fields=p.get("fields", _FULL_PUBLIC_FIELDS),
                     story_consent=1 if p["story"] else 0)
         first_results = last_results = None
+        n = len(p["kwh"])
         for i, (kwh, kl) in enumerate(zip(p["kwh"], p["water_kl"])):
             data = default_assessment()
             data["general"]["household_size"] = p["hh"]
@@ -537,17 +625,17 @@ def seed_demo_data():
                  "average_passengers": 1})
             data["lifestyle"]["diet"] = p["diet"]
             results = run_assessment(data)
-            created = (datetime.now() - timedelta(weeks=(len(p["kwh"]) - 1 - i))
+            created = (datetime.now() - timedelta(weeks=(n - 1 - i))
                        ).isoformat(timespec="seconds")
             save_assessment(user["id"], data, results, source="questionnaire",
                             created_at=created)
-            check_in(user["id"], (datetime.now()
-                                  - timedelta(weeks=(len(p["kwh"]) - 1 - i))).date())
+            check_in(user["id"],
+                     (datetime.now() - timedelta(weeks=(n - 1 - i))).date())
             if first_results is None:
                 first_results = results
             last_results = results
-        award(user["id"], "first_assessment", "demo seed")
-        award(user["id"], "three_period_reduction", "demo seed")
+        # real achievement rules → naturally varied earned/locked states
+        ach.evaluate_after_assessment(user["id"])
         if p["story"]:
             improvement = round(
                 100 * (first_results["electricity"]["total_electricity_kwh_month"]

@@ -7,11 +7,66 @@ import streamlit as st
 
 import ai
 import database as db
-from views.common import require_login
+import avatar as av
+from views.common import require_login, latest_score, privacy_note
+from visuals import env_tier
 
 PUBLIC_FIELD_CHOICES = ["score", "water", "electricity", "carbon", "streak",
                         "achievements"]
-AVATARS = ["🌱", "🌻", "🌳", "🐝", "🦉", "🐬", "⛰️", "☀️"]
+
+# Human-readable names for the small, curated avatar palettes (spec §11 —
+# emotional ownership, not a complicated character creator).
+_SKIN_NAMES = ["Porcelain", "Light", "Tan", "Amber", "Brown", "Deep"]
+_HAIR_NAMES = ["Black", "Brown", "Chestnut", "Ginger", "Blonde", "Silver",
+               "White", "Violet", "Rose", "Leaf"]
+_TOP_NAMES = ["Leaf green", "Sky blue", "Grape", "Sunlight", "Coral", "Teal",
+              "Rose"]
+_STYLE_NAMES = {"short": "Short", "curly": "Curly", "bun": "Bun", "long": "Long",
+                "wavy": "Wavy", "buzz": "Buzz", "bald": "None"}
+_ACC_NAMES = {"none": "None", "glasses": "Glasses", "sunhat": "Sun hat",
+              "flower": "Flower", "cap": "Cap"}
+
+
+def _pick(label, names, values, current, key):
+    """A named selectbox over a colour/option palette, returning the value."""
+    idx = values.index(current) if current in values else 0
+    chosen = st.selectbox(label, names, index=idx, key=key)
+    return values[names.index(chosen)]
+
+
+def _avatar_customizer(user):
+    """Live Sprout customiser: choices on the right, a reactive preview on the
+    left that reflects both the look AND the user's current impact mood."""
+    cfg = av.config_from_user(user)
+    tier = env_tier(latest_score(user["id"]))
+    prev, ctrl = st.columns([1, 1.6], gap="large")
+    with ctrl:
+        c1, c2 = st.columns(2)
+        with c1:
+            skin = _pick("Skin", _SKIN_NAMES, av.SKINS, cfg["skin"], "av_skin")
+            style = st.selectbox(
+                "Hair", list(_STYLE_NAMES.values()),
+                index=av.HAIR_STYLES.index(cfg["hair_style"]),
+                key="av_style")
+            style = av.HAIR_STYLES[list(_STYLE_NAMES.values()).index(style)]
+        with c2:
+            hair = _pick("Hair colour", _HAIR_NAMES, av.HAIRS, cfg["hair"],
+                         "av_hair")
+            top = _pick("Clothing", _TOP_NAMES, av.TOPS, cfg["top"], "av_top")
+        acc = st.selectbox(
+            "Accessory", list(_ACC_NAMES.values()),
+            index=av.ACCESSORIES.index(cfg["accessory"]), key="av_acc")
+        acc = av.ACCESSORIES[list(_ACC_NAMES.values()).index(acc)]
+    new_cfg = {"skin": skin, "hair": hair, "hair_style": style, "top": top,
+               "accessory": acc}
+    with prev:
+        st.markdown(
+            f"<div style='display:flex;justify-content:center'>"
+            f"{av.svg(new_cfg, tier=tier, size=150)}</div>",
+            unsafe_allow_html=True)
+        st.caption("Your character reacts to your impact — its mood and the "
+                   "little habitat around it grow as your score improves.")
+    return new_cfg
 
 
 def render():
@@ -24,7 +79,15 @@ def render():
     st.subheader("AI connection")
     available, msg = ai.ai_status()
     if available:
-        st.success(msg)
+        # Standing status is a quiet caption (matches the sidebar's "● ready"),
+        # NOT a success alert — so a live test shows exactly ONE success box,
+        # never two green confirmations at once. A just-connected message is
+        # shown once, then replaced by the caption on the next run.
+        just_connected = st.session_state.pop("ai_connected_msg", None)
+        if just_connected:
+            st.success(just_connected)
+        else:
+            st.caption(f"● {msg}")
         if st.button("Test the connection", key="btn_ai_test"):
             with st.spinner("Pinging Claude…"):
                 ok, result = ai.test_connection()
@@ -57,7 +120,10 @@ def render():
                 with st.spinner("Verifying with a live request…"):
                     ok2, test_msg = ai.test_connection()
                 if ok2:
-                    st.success(f"{result}  \n{test_msg}")
+                    # hand the single confirmation to the rerun (shown once
+                    # in the "available" branch above) — no duplicate box
+                    st.session_state["ai_connected_msg"] = \
+                        f"{result}  \n{test_msg}"
                     st.rerun()
                 else:
                     st.error(f"Key saved, but the test call failed: {test_msg}")
@@ -69,17 +135,32 @@ def render():
 
     # ------------------------------------------------------------- account
     st.subheader("Account")
-    c1, c2 = st.columns(2)
-    with c1:
-        name = st.text_input("Display name", value=user["display_name"])
-    with c2:
-        avatar = st.selectbox("Avatar", AVATARS,
-                              index=(AVATARS.index(user["avatar"])
-                                     if user["avatar"] in AVATARS else 0))
+    name = st.text_input("Display name", value=user["display_name"])
     country = st.text_input("Country", value=user.get("country") or "South Africa")
+
+    st.markdown("**Your Sprout**")
+    st.caption("Make the character your own — it's how you appear across the "
+               "app and how your progress comes to life.")
+    avatar_cfg = _avatar_customizer(user)
+    avatar = av.config_to_str(avatar_cfg)
+
+    # --------------------------------------------------------- appearance
+    st.subheader("Appearance")
+    cur_theme = st.session_state.get("theme", user.get("theme") or "light")
+    theme_choice = st.radio(
+        "Theme", ["light", "dark"],
+        index=0 if cur_theme == "light" else 1, horizontal=True,
+        format_func=lambda t: "☀️  Light" if t == "light" else "🌙  Dark",
+        help="Also available any time from the sidebar. Your choice is saved "
+             "to your account.")
+    if theme_choice != cur_theme:
+        st.session_state["theme"] = theme_choice
+        db.update_user(user["id"], theme=theme_choice)
+        st.rerun()
 
     # ------------------------------------------------------------- privacy
     st.subheader("Privacy and consent")
+    privacy_note("settings")
     public = st.toggle("Public account",
                        value=(user["privacy"] == "public"),
                        help="Public: the summary stats you approve below appear "

@@ -6,9 +6,165 @@ import streamlit as st
 
 import database as db
 import achievements as ach
+import locations as loc
+import widgets as w
 from calculations import run_assessment
 from goals import pick_weekly_goals
 from visuals import icon
+
+# placeholder option meaning "not specified" in the dependent location pickers
+_LOC_PLACEHOLDER = "— Select —"
+
+
+_PRIVACY_CORE = (
+    "Your data will not be shared with third parties without your permission. "
+    "It's kept in a local database on the app's server. AI features send your "
+    "inputs (like a bill image or your answers) to the AI provider to read and "
+    "advise — never your password. Public sharing is opt-in and limited to the "
+    "summary stats you approve; bills, raw data and chats always stay private.")
+
+_PRIVACY_NOTES = {
+    "general": ("Private by default — your data isn't shared without your "
+                "permission.", _PRIVACY_CORE),
+    "signup": ("Private by default. You choose if anything is ever shared.",
+               _PRIVACY_CORE),
+    "chat": ("This chat is private — Sprout only uses it to build your "
+             "assessment.",
+             _PRIVACY_CORE + "\n\nThe conversation is used only to fill your "
+             "own assessment fields; it isn't shown to anyone else."),
+    "submit": ("Your results are saved privately to your account.",
+               _PRIVACY_CORE),
+    "upload": ("We read the bill to fill your assessment — you confirm every "
+               "value.",
+               "**Why we process it:** to read your consumption and amount so "
+               "you don't have to type them.\n\n**What we extract:** usage "
+               "(kWh or kL), the bill amount, the municipality/utility and the "
+               "billing period.\n\n**How it's used:** it pre-fills your "
+               "assessment *after you confirm* — nothing counts until you do.\n\n"
+               "**Storage:** the file is stored privately under your account "
+               "and is never shown on public pages. " + _PRIVACY_CORE),
+    "settings": ("You're in control of what's private and what's shared.",
+                 _PRIVACY_CORE),
+}
+
+
+def privacy_note(context="general", *, expanded=False):
+    """A small, accurate privacy reassurance with an expandable detail
+    (spec §10). Wording matches the app's real data practices — no invented
+    guarantees."""
+    line, detail = _PRIVACY_NOTES.get(context, _PRIVACY_NOTES["general"])
+    st.markdown(
+        f"<div style='display:flex;align-items:center;gap:.4rem;"
+        f"color:#5c7069;font-size:.82rem;margin:.1rem 0'>"
+        f"{icon('lock', 13, '#5c7069')} {line}</div>", unsafe_allow_html=True)
+    with st.expander("How your data is handled", expanded=expanded):
+        st.markdown(detail)
+
+
+def measure_intro(active):
+    """The two-ways-to-assess chooser (spec §1), shown at the top of both the
+    Assessment and Chat Assessment pages. `active` is 'manual' or 'chat'."""
+    pages = st.session_state.get("pages", {})
+    st.markdown("#### Two ways to tell us about your impact")
+    st.caption("Both ask the same questions, use the **same calculations** and "
+               "produce the **same results** — pick whichever feels easier, and "
+               "you can switch any time.")
+    cards = [
+        ("manual", "assessment", "edit", "Fill it in myself",
+         "Answer a structured set of questions about your water, electricity, "
+         "travel and lifestyle. Upload a bill and we read it for you."),
+        ("chat", "chat", "chat", "Chat through it",
+         "Have a conversation with Sprout, our assistant. It asks the same "
+         "questions naturally and helps you complete the assessment."),
+    ]
+    c1, c2 = st.columns(2)
+    for col, (kind, page_key, ic, title, desc) in zip((c1, c2), cards):
+        with col, st.container(border=True):
+            here = " <span class='pill' style='font-size:.68rem'>you're here</span>" \
+                if kind == active else ""
+            st.markdown(f"{icon(ic, 20, '#2E9E63')} **{title}**{here}",
+                        unsafe_allow_html=True)
+            st.caption(desc)
+            if kind != active and page_key in pages:
+                st.page_link(pages[page_key], label=f"Switch to “{title}”",
+                             icon=":material/swap_horiz:")
+
+
+def location_picker(general, *, key_prefix="loc"):
+    """Dependent Country → Region → Municipality selectors (spec §6).
+
+    Country is a validated searchable list (no free text). Region is disabled
+    until a country with known regions is chosen; Municipality is disabled
+    until a region with known local authorities is chosen. Where we don't hold
+    the data we say so plainly instead of faking it. Writes validated values
+    back into `general` (country/region/municipality)."""
+    country_ph = "Select your country…"
+    countries = [country_ph] + loc.country_options()
+    cur_c = general.get("country") if loc.is_country(general.get("country")) else country_ph
+    picked_c = w.select(
+        "Country", f"{key_prefix}_country", countries, cur_c,
+        help="Start typing to search. Only listed countries can be chosen.")
+    general["country"] = "" if picked_c == country_ph else picked_c
+    country = general["country"]
+
+    # --- region (level 1) — disabled until a country is chosen (§3) ---
+    if not country:
+        st.selectbox("Province / Region", ["Select a country first"],
+                     disabled=True, key=f"aw_{key_prefix}_region_gate",
+                     help="Choose a country above to enable this field.")
+        st.selectbox("Municipality / local authority",
+                     ["Select a country first"], disabled=True,
+                     key=f"aw_{key_prefix}_muni_gate")
+        general["region"] = ""
+        general["municipality"] = ""
+        return general
+    if loc.has_regions(country):
+        opts = [_LOC_PLACEHOLDER] + loc.region_options(country)
+        cur = general.get("region") or _LOC_PLACEHOLDER
+        pick = w.select(loc.region_term(country), f"{key_prefix}_region",
+                        opts, cur if cur in opts else _LOC_PLACEHOLDER)
+        general["region"] = "" if pick in (_LOC_PLACEHOLDER, loc.NOT_LISTED) else pick
+    else:
+        st.selectbox(
+            loc.region_term(country), ["Regional list not available yet"],
+            disabled=True, key=f"aw_{key_prefix}_region_off",
+            help="We don't hold regions for this country yet — you can "
+                 "continue without it; national figures are used.")
+        # Visible, honest explanation (brief §4) — never leave a mysteriously
+        # empty selector; say plainly what will be used instead.
+        st.caption(f"Detailed regional data isn't available for {country} yet. "
+                   "National factors will be used.")
+        general["region"] = ""
+
+    # --- municipality (level 2, depends on region) ---
+    region = general.get("region")
+    if region and loc.has_municipalities(country, region):
+        opts = [_LOC_PLACEHOLDER] + loc.municipality_options(country, region)
+        cur = general.get("municipality") or _LOC_PLACEHOLDER
+        pick = w.select(
+            loc.municipality_term(country), f"{key_prefix}_muni", opts,
+            cur if cur in opts else _LOC_PLACEHOLDER,
+            help="Lets us convert bill amounts with the right local block tariff.")
+        general["municipality"] = "" if pick in (_LOC_PLACEHOLDER, loc.NOT_LISTED) else pick
+    else:
+        needs_region = loc.has_regions(country) and not region
+        st.selectbox(
+            loc.municipality_term(country),
+            [f"Choose a {loc.region_term(country).lower()} first" if needs_region
+             else "Local-authority list not available yet"],
+            disabled=True, key=f"aw_{key_prefix}_muni_off")
+        if not needs_region:
+            # Honest note (brief §4): we don't itemise local authorities here,
+            # rather than fabricating them.
+            st.caption("Local-authority data isn't available for this area "
+                       "yet. Regional or national factors will be used.")
+        general["municipality"] = ""
+    # Defense-in-depth: run the picker's result through the SAME canonical rule
+    # the chat path uses, so neither flow can leave an inconsistent triple.
+    general["country"], general["region"], general["municipality"] = \
+        loc.resolve_location(general.get("country"), general.get("region"),
+                             general.get("municipality"))
+    return general
 
 # period conversion: internal units are water L/month, elec kWh/month,
 # carbon kg/year (calc doc §1)

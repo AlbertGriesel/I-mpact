@@ -215,6 +215,28 @@ FACTORS = {
         "source": "UK dietary study (vegan)", "geography": "UK proxy",
         "tag": "proxy",
     },
+
+    # ------------------------------------------------- business operations
+    # Used only by the business assessment path (calculate_fleet / _waste).
+    # Personal footprints never touch these.
+    "waste_mixed_landfill_kgco2e_per_kg": {
+        "value": 0.45867, "unit": "kg CO2e/kg",
+        "source": "UK Government 2026 GHG conversion factors "
+                  "(commercial & industrial waste to landfill)",
+        "geography": "UK proxy", "tag": "proxy",
+    },
+    "waste_recycling_kgco2e_per_kg": {
+        "value": 0.02107, "unit": "kg CO2e/kg",
+        "source": "UK Government 2026 GHG conversion factors "
+                  "(mixed recycling, open-loop)",
+        "geography": "UK proxy", "tag": "proxy",
+    },
+    "fleet_default_kgco2e_per_km": {
+        "value": 0.20, "unit": "kg CO2e/km",
+        "source": "[MVP assumption] fallback for a fleet vehicle whose fuel "
+                  "economy is unknown (mixed car / light-commercial average)",
+        "geography": "generic", "tag": "assumption",
+    },
 }
 
 # Diet category label -> factor key

@@ -7,9 +7,11 @@ from calculations import run_assessment
 from tariffs import water_kl_from_bill, electricity_kwh_from_bill
 from airports import route_distance_km, same_country, resolve_airport
 from vehicles import lookup_vehicle
-from goals import pick_weekly_goals
+from goals import (pick_weekly_goals, generate_goal_candidates,
+                   rank_candidate_goals, sanitize_planner_goals)
 from benchmarks import score_mood
 from comparisons import water_comparison, electricity_comparison, carbon_comparison
+import locations as loc
 
 
 def approx(a, b, tol=0.02):
@@ -296,6 +298,330 @@ def test_vehicle_lookup():
     assert lookup_vehicle("volkswagen", "polo vivo")["l_per_100km"] == 5.7
     assert lookup_vehicle("BYD", "Atto 3")["fuel"] == "electric"
     assert lookup_vehicle("Fiat", "Uno 1990") is None
+
+
+def test_business_default_and_gate():
+    from schema import is_calculable, business_sector_flags
+    b = default_assessment("business")
+    assert b["general"]["account_type"] == "business"
+    assert "business" in b and "fleet" in b["transport"]
+    assert is_calculable(b) is False           # needs sector + size
+    b["general"].update({"sector": "Office / professional services",
+                         "employees": 10, "floor_area_m2": 300})
+    assert is_calculable(b) is True
+    flags = business_sector_flags("Restaurant / café / hospitality")
+    assert flags["refrigeration"] and flags["food_waste"] and flags["process_water"]
+    assert business_sector_flags("Office / professional services")["food_waste"] is False
+
+
+def test_business_engine_reuses_factors():
+    b = default_assessment("business")
+    b["general"].update({"sector": "Manufacturing / industrial",
+                         "employees": 25, "floor_area_m2": 1000})
+    b, applied, rejected = merge_updates(b, {
+        "electricity": {"kwh_month": 8000, "measured_source": "bill"},
+        "water": {"water_kl_month": 120, "measured_source": "bill"},
+        "transport": {"fleet": [
+            {"vehicle_type": "Truck / heavy", "fuel": "diesel", "count": 3,
+             "annual_km_each": 40000, "l_per_100km": 28}]},
+        "business": {"waste_kg_month": 1000, "recycles": True,
+                     "recycling_percent": 50, "process_water_kl_month": 40},
+    })
+    assert not rejected, rejected
+    r = run_assessment(b)
+    c, e, w = r["carbon"], r["electricity"], r["water"]
+    # diet excluded, fleet + waste included
+    assert "diet_and_food_waste" not in c["breakdown"]
+    assert c["breakdown"]["fleet"] > 0 and c["breakdown"]["waste"] > 0
+    # electricity CO2e uses the SAME grid factor as personal (0.906)
+    assert approx(e["electricity_co2e_kg_year"], 8000 * 0.906 * 12)
+    # process water added to the 120 kL total -> 160 kL/month
+    assert approx(w["total_water_litres_month"], 160000)
+    # normalisation present
+    assert e["kwh_per_m2_year"] is not None and c["per_employee_co2e_kg_year"] is not None
+    # the scale is open above 100 (net positive); this fixture has no offsets
+    assert 0 <= r["score"]["total"] <= 100
+
+
+def test_business_no_meter_uses_sector_estimate():
+    b = default_assessment("business")
+    b["general"].update({"sector": "Office / professional services",
+                         "employees": 20, "floor_area_m2": 500})
+    r = run_assessment(b)
+    assert r["electricity"]["calculation_method"] == "business_sector_estimate"
+    assert r["water"]["calculation_method"] == "business_sector_estimate"
+    # 200 kWh/m2/yr * 500 / 12 = 8333.3 kWh/month
+    assert approx(r["electricity"]["total_electricity_kwh_month"], 200 * 500 / 12)
+
+
+# --------------------------------------------------------------------------
+# Location validation — the shared canonical layer that the manual picker AND
+# the AI/chat path (schema.merge_updates) now both run through.
+# --------------------------------------------------------------------------
+
+def test_location_valid_sa_province_municipality():
+    c, r, m = loc.resolve_location("south africa", "western cape",
+                                   "City of Cape Town (metro)")
+    assert c == "South Africa"
+    assert r == "Western Cape"
+    assert m == "City of Cape Town (metro)"
+
+
+def test_location_invalid_province_for_sa():
+    assert loc.canonical_region("South Africa", "Bavaria") is None
+    c, r, m = loc.resolve_location("South Africa", "Bavaria", "Somewhere")
+    assert c == "South Africa" and r == "" and m == ""
+
+
+def test_location_country_alias():
+    assert loc.canonical_country("USA") == "United States"
+    assert loc.canonical_country("uk") == "United Kingdom"
+    assert loc.canonical_country("Narnia") is None
+
+
+def test_location_valid_country_no_region_data():
+    # France is a recognised country but we hold no subdivisions for it
+    assert loc.canonical_country("France") == "France"
+    assert loc.has_regions("France") is False
+    c, r, m = loc.resolve_location("France", "Ile-de-France", "Paris")
+    assert c == "France" and r == "" and m == ""
+
+
+def test_chat_rejects_arbitrary_municipality():
+    d = default_assessment()
+    d["general"]["country"] = "South Africa"
+    d["general"]["region"] = "Western Cape"
+    merged, applied, rejected = merge_updates(
+        d, {"general": {"municipality": "Atlantis Free State Utopia"}})
+    assert merged["general"]["municipality"] == ""
+    assert any("municipality" in r for r in rejected)
+
+
+def test_chat_maps_country_and_rejects_bad_region():
+    d = default_assessment()
+    # a valid country given informally is canonicalised; bogus province rejected
+    merged, applied, rejected = merge_updates(
+        d, {"general": {"country": "south africa", "region": "Nowhere"}})
+    assert merged["general"]["country"] == "South Africa"
+    assert merged["general"]["region"] == ""
+    assert any("region" in r for r in rejected)
+    # a real city name maps to the canonical municipality
+    merged2, _, _ = merge_updates(
+        merged, {"general": {"region": "Gauteng",
+                             "municipality": "Johannesburg"}})
+    assert merged2["general"]["region"] == "Gauteng"
+    assert merged2["general"]["municipality"] == "City of Johannesburg (metro)"
+
+
+def test_location_region_cleared_when_country_changes():
+    d = default_assessment()
+    d["general"].update({"country": "South Africa", "region": "Gauteng",
+                         "municipality": "City of Tshwane (metro)"})
+    # user now says they're in the United States — old province/muni must clear
+    merged, applied, rejected = merge_updates(
+        d, {"general": {"country": "United States"}})
+    assert merged["general"]["country"] == "United States"
+    assert merged["general"]["region"] == ""
+    assert merged["general"]["municipality"] == ""
+
+
+def test_location_municipality_cleared_when_region_changes():
+    d = default_assessment()
+    d["general"].update({"country": "South Africa", "region": "Western Cape",
+                         "municipality": "City of Cape Town (metro)"})
+    # switch province; the municipality from the old province must clear
+    merged, _, _ = merge_updates(
+        d, {"general": {"region": "KwaZulu-Natal"}})
+    assert merged["general"]["region"] == "KwaZulu-Natal"
+    assert merged["general"]["municipality"] == ""
+
+
+def test_location_tariff_receives_canonical_name():
+    # the canonical municipality name still resolves through the tariff matcher
+    kl, label = water_kl_from_bill(500.0, "City of Cape Town (metro)")
+    assert kl is not None and label is not None
+
+
+# --------------------------------------------------------------------------
+# Business goal ranking — must use sector intensities/benchmarks, NOT the
+# household per-person / per-household benchmarks (audit fix).
+# --------------------------------------------------------------------------
+
+def _biz(sector, **general):
+    b = default_assessment("business")
+    b["general"]["sector"] = sector
+    b["general"].update(general)
+    return b
+
+
+def test_business_office_electricity_relevance():
+    b = _biz("Office / professional services", employees=20, floor_area_m2=500)
+    b["electricity"]["kwh_month"] = 8000
+    b["electricity"]["measured_source"] = "manual"
+    r = run_assessment(b)
+    ranked = rank_candidate_goals(b, r)
+    elec = [g for g in ranked if g["metric"] == "electricity"]
+    # business electricity goals get a real relevance (5), not the old default 3
+    assert elec and any(g["relevance"] == 5 for g in elec)
+    # an office is not a refrigeration/food-waste sector -> no such goals
+    addrs = {g.get("addresses") for g in ranked}
+    assert "refrigeration" not in addrs and "food_waste" not in addrs
+    # reasons use business phrasing, never the household "diet"/"shower" wording
+    assert all("shower" not in g["reason"] and "diet" not in g["reason"]
+               for g in ranked)
+
+
+def test_business_restaurant_categories():
+    b = _biz("Restaurant / café / hospitality", employees=15, floor_area_m2=300)
+    b["electricity"]["kwh_month"] = 12000
+    b["electricity"]["measured_source"] = "manual"
+    b["business"]["refrigeration"] = True
+    b["business"]["food_waste_kg_month"] = 400
+    b["business"]["waste_kg_month"] = 800
+    r = run_assessment(b)
+    ranked = rank_candidate_goals(b, r)
+    by_addr = {g.get("addresses"): g for g in ranked}
+    assert "refrigeration" in by_addr and "food_waste" in by_addr
+    # both are material for a restaurant -> top relevance
+    assert by_addr["refrigeration"]["relevance"] == 5
+    assert by_addr["food_waste"]["relevance"] == 5
+
+
+def test_business_water_intensive_prominence():
+    b = _biz("Agriculture / farming", employees=10, floor_area_m2=1000)
+    b["water"]["water_kl_month"] = 900          # very high per-m² intensity
+    b["water"]["measured_source"] = "manual"
+    b["business"]["process_water_kl_month"] = 500
+    r = run_assessment(b)
+    ranked = rank_candidate_goals(b, r)
+    water_goals = [g for g in ranked if g["metric"] == "water"]
+    # high water intensity vs the sector benchmark -> high impact/prominence
+    assert water_goals and max(g["impact"] for g in water_goals) >= 4
+
+
+def test_business_fleet_heavy_relevance():
+    b = _biz("Warehouse / logistics", employees=30, floor_area_m2=2000)
+    b["electricity"]["kwh_month"] = 5000
+    b["electricity"]["measured_source"] = "manual"
+    b["transport"]["fleet"] = [{
+        "vehicle_type": "Truck", "fuel": "diesel", "count": 10,
+        "annual_km_each": 60000, "l_per_100km": 30, "kwh_per_km": None}]
+    r = run_assessment(b)
+    ranked = rank_candidate_goals(b, r)
+    fleet = [g for g in ranked if g.get("addresses") == "fleet"]
+    # fleet dominates this business's carbon -> strong relevance
+    assert fleet and fleet[0]["relevance"] >= 4
+
+
+def test_personal_ranking_regression():
+    d = default_assessment()
+    d["general"]["household_size"] = 3
+    d["electricity"]["electric_geyser"] = True
+    d["water"]["shower_minutes"] = 12
+    d["water"]["showers_per_week"] = 7
+    r = run_assessment(d)
+    ranked = rank_candidate_goals(d, r)
+    geyser = [g for g in ranked if g.get("addresses") == "geyser"]
+    # personal geyser relevance is unchanged by the business work
+    assert geyser and geyser[0]["relevance"] == 5
+
+
+# --------------------------------------------------------------------------
+# Planner trust boundary — AI may propose actions but never persist an
+# unvalidated numerical saving (audit fix).
+# --------------------------------------------------------------------------
+
+def _geyser_user():
+    d = default_assessment()
+    d["general"]["household_size"] = 3
+    d["electricity"]["electric_geyser"] = True
+    d["water"]["shower_minutes"] = 12
+    d["water"]["showers_per_week"] = 7
+    return d, run_assessment(d)
+
+
+def test_planner_grounded_supported_goal():
+    d, r = _geyser_user()
+    cand = next(c for c in generate_goal_candidates(d, r)
+                if c.get("addresses") == "geyser")
+    out = sanitize_planner_goals(
+        [{"title": "Reduce geyser heating time each day",
+          "metric": "electricity"}], d, r)
+    assert len(out) == 1 and out[0]["source"] == "planner_verified"
+    # the saving comes from the deterministic candidate, not the LLM
+    assert out[0]["expected_saving"] == cand["expected_saving"]
+    assert out[0]["expected_saving_unit"] == cand["expected_saving_unit"]
+
+
+def test_planner_unsupported_qualitative():
+    d, r = _geyser_user()
+    out = sanitize_planner_goals(
+        [{"title": "Encourage the family to carpool", "metric": "carbon"}], d, r)
+    assert len(out) == 1 and out[0]["source"] == "planner_qualitative"
+    assert out[0]["expected_saving"] is None
+
+
+def test_planner_discards_invented_saving():
+    d, r = _geyser_user()
+    out = sanitize_planner_goals(
+        [{"title": "Plant an indigenous garden", "metric": "water",
+          "expected_saving": 420, "expected_saving_unit": "L/week"}], d, r)
+    assert out[0]["source"] == "planner_qualitative"
+    assert out[0]["expected_saving"] is None
+
+
+def test_planner_wrong_unit_overridden():
+    d, r = _geyser_user()
+    cand = next(c for c in generate_goal_candidates(d, r)
+                if c.get("addresses") == "geyser")
+    out = sanitize_planner_goals(
+        [{"title": "Reduce geyser heating time", "metric": "electricity",
+          "expected_saving": 5, "expected_saving_unit": "kg CO2e/week"}], d, r)
+    # a matched goal takes the app's verified unit + value, not the LLM's
+    assert out[0]["expected_saving_unit"] == cand["expected_saving_unit"]
+    assert out[0]["expected_saving"] == cand["expected_saving"]
+
+
+def test_planner_malformed_number_safe():
+    d, r = _geyser_user()
+    out = sanitize_planner_goals(
+        [{"title": "Meditate on sustainability", "metric": "carbon",
+          "expected_saving": "loads", "expected_saving_unit": 999}], d, r)
+    assert out[0]["expected_saving"] is None
+    assert out[0]["source"] == "planner_qualitative"
+
+
+# --------------------------------------------------------------------------
+# Score semantics (§18): 50 ≈ average, 100 = net zero, >100 only for genuine
+# net-positive contribution — never for merely-better-than-average behaviour.
+# --------------------------------------------------------------------------
+
+def test_score_above_100_requires_net_positive():
+    from visuals import env_tier, score_label
+    # an extremely light household WITHOUT offsets must stay below 100
+    d = default_assessment()
+    d["general"]["household_size"] = 2
+    d["water"].update({"water_kl_month": 2.0, "measured_source": "manual"})
+    d["electricity"].update({"kwh_month": 40, "measured_source": "manual"})
+    d["lifestyle"]["diet"] = "Vegan"
+    r = run_assessment(d)
+    assert r["score"]["total"] < 100
+    # the same household buying offsets beyond its emissions goes net positive
+    d2 = {**d}
+    d2 = default_assessment()
+    d2["general"]["household_size"] = 2
+    d2["water"].update({"water_kl_month": 2.0, "measured_source": "manual"})
+    d2["electricity"].update({"kwh_month": 40, "measured_source": "manual"})
+    d2["lifestyle"].update({"diet": "Vegan", "buys_offsets": True,
+                            "offset_tonnes_per_year": 15.0})
+    r2 = run_assessment(d2)
+    assert r2["score"]["carbon"] > 100
+    assert r2["score"]["total"] > r["score"]["total"]
+    # tier + label agree with the semantics
+    assert env_tier(100) == "NET_ZERO" and env_tier(105) == "NET_POSITIVE"
+    assert env_tier(99) == "EXCELLENT" and env_tier(50) == "AVERAGE"
+    assert score_label(101) == "Net positive"
+    assert score_label(100) == "Net zero impact"
 
 
 def main():

@@ -1,7 +1,8 @@
-"""Floating environmental assistant (§18).
+"""Floating AI assistant (§18/brief §7).
 
-A green daisy button fixed in the bottom-right corner opens a floating chat
-panel on every page. The assistant is grounded in the user's live results,
+A clearly AI/chat launcher (a speech-bubble-with-spark, distinct from the daisy
+mascot and the user avatar) fixed in the bottom-right corner opens a floating
+chat panel on every page. The assistant is grounded in the user's live results,
 goals and history, can explain their impact, plan improvements and propose
 measurable goals — which are added only on explicit confirmation and pass
 through the central duplicate check (§13)."""
@@ -12,12 +13,13 @@ import streamlit as st
 
 import ai
 import database as db
-from goals import generate_goal_candidates, find_duplicate
-from visuals import pill
+from goals import (generate_goal_candidates, find_duplicate,
+                   sanitize_planner_goals)
+from visuals import pill, scroll_chat_to_prompt
 
-_GREETING = ("Hi, I'm **Sprout**. Ask me anything about your footprint — "
-             "*“why is my carbon so high?”*, *“how do I cut water use "
-             "without killing the garden?”* — and I'll turn it into "
+_GREETING = ("Hi — I'm the **I/mpact assistant**. Ask me anything about your "
+             "results — *“why is my carbon so high?”*, *“how do I cut water "
+             "use without killing the garden?”* — and I'll turn it into "
              "practical, measurable steps.")
 
 
@@ -28,6 +30,7 @@ def _grounding(user):
     streak = db.get_streak(user["id"])
     g = {
         "display_name": user["display_name"],
+        "account_type": user.get("account_type", "personal"),
         "reminder_cadence": user["reminder_cadence"],
         "current_week_goals": [
             {"title": x["title"], "metric": x["metric"], "status": x["status"]}
@@ -43,6 +46,7 @@ def _grounding(user):
     if latest:
         g["latest_results"] = latest["results"]
         g["household"] = latest["inputs"]["general"]
+        g["data_completeness"] = ai.data_completeness(latest["results"])
         g["deterministic_goal_candidates"] = generate_goal_candidates(
             latest["inputs"], latest["results"])
         if len(history) > 1:
@@ -64,7 +68,8 @@ def render_floating(user):
     because visibility is plain session state."""
     with st.container(key="assistant_fab"):
         if st.button("Assistant", key="fab_btn",
-                     help="Chat with Sprout, your eco assistant"):
+                     help="Ask I/mpact — questions about your results and how "
+                          "to improve"):
             st.session_state["assistant_open"] = \
                 not st.session_state.get("assistant_open", False)
 
@@ -74,14 +79,14 @@ def render_floating(user):
     with st.container(key="assistant_panel"):
         with st.container(border=True):
             head, close = st.columns([5, 1])
-            head.markdown("**Sprout — your eco assistant**")
+            head.markdown("**I/mpact assistant** · AI help with your results")
             if close.button("✕", key="assistant_close"):
                 st.session_state["assistant_open"] = False
                 st.rerun()
 
             if user is None:
-                st.info("Sign in to chat — Sprout grounds every answer in "
-                        "your own numbers.")
+                st.info("Sign in to chat — the assistant grounds every answer "
+                        "in your own numbers.")
                 return
             if not ai.assistant_ready():
                 st.warning("The assistant is offline. Connect a free key "
@@ -98,6 +103,10 @@ def render_floating(user):
                 for m in history:
                     role = "user" if m["role"] == "user" else "assistant"
                     st.chat_message(role).markdown(m.get("text", ""))
+            # §5: after a NEW answer, park the user's prompt at the top of the
+            # scroll box — once, so manual scrolling on later reruns is free.
+            if st.session_state.pop("assistant_scroll", False):
+                scroll_chat_to_prompt()
 
             # proposed goals: Add once -> confirmation -> box disappears (§13)
             proposals = st.session_state.get("assistant_proposals", [])
@@ -139,9 +148,16 @@ def render_floating(user):
                 if out["ok"]:
                     st.session_state["assistant_history"] = out["history"]
                     if out["proposed_goals"]:
+                        # Trust boundary: strip any AI-supplied saving and
+                        # re-derive it deterministically before anything can be
+                        # added to the plan (see goals.sanitize_planner_goals).
+                        latest = db.latest_assessment(user["id"])
+                        verified = (sanitize_planner_goals(
+                            out["proposed_goals"], latest["inputs"],
+                            latest["results"]) if latest else [])
                         existing = _existing_goals(user)
                         fresh, dup = [], 0
-                        for g in out["proposed_goals"]:
+                        for g in verified:
                             if find_duplicate(g, existing):
                                 dup += 1
                             else:
@@ -153,6 +169,7 @@ def render_floating(user):
                                      icon=":material/info:")
                 else:
                     history.append({"role": "assistant", "text": out["text"]})
+                st.session_state["assistant_scroll"] = True   # §5: reposition once
                 st.rerun()
-            st.caption("Sprout proposes — you decide. Goals are only saved "
-                       "when you press *Add goal*.")
+            st.caption("The assistant proposes — you decide. Goals are only "
+                       "saved when you press *Add goal*.")

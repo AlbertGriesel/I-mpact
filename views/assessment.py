@@ -16,13 +16,23 @@ import water
 import electricity
 import transport
 import lifestyle
+import business
 import widgets as w
 from schema import default_assessment
-from views.common import current_user, complete_assessment, achievement_toast
+from views.common import (current_user, complete_assessment, achievement_toast,
+                          location_picker, measure_intro)
 from visuals import icon
 
 STEPS = ["General", "Water", "Electricity", "Transport", "Lifestyle", "Review"]
 REVIEW = len(STEPS) - 1
+
+
+def _account_type(data):
+    return data.get("general", {}).get("account_type", "personal")
+
+
+def _steps(acct):
+    return business.STEPS if acct == "business" else STEPS
 
 # review sections: (title, icon, wizard step, monthly-update hint)
 _SECTIONS = [
@@ -150,7 +160,7 @@ def _section_rows(title, data):
 def _reset_assessment_session():
     for k in ("assessment_data", "wizard_step", "assessment_returning",
               "water_bill_sig", "elec_bill_sig", "water_extraction",
-              "elec_extraction"):
+              "elec_extraction", "aw_flight_store", "aw_fleet_store"):
         st.session_state.pop(k, None)
     w.clear_all()
 
@@ -161,9 +171,9 @@ def _go_to_step(step):
     st.rerun()
 
 
-def _stepper(step):
-    cols = st.columns(len(STEPS))
-    for i, (col, label) in enumerate(zip(cols, STEPS)):
+def _stepper(step, steps):
+    cols = st.columns(len(steps))
+    for i, (col, label) in enumerate(zip(cols, steps)):
         with col:
             if i == step:
                 col.markdown(
@@ -179,7 +189,15 @@ def _stepper(step):
             else:
                 col.markdown(f"<div style='color:#9bb0a8'>{label}</div>",
                              unsafe_allow_html=True)
-    st.progress(step / (len(STEPS) - 1))
+    st.progress(step / (len(steps) - 1))
+
+
+def _new_account_type(user):
+    """The account type a fresh assessment should use: the signed-in user's
+    type, or a guest's chosen type (defaults to personal)."""
+    if user:
+        return user.get("account_type", "personal")
+    return st.session_state.get("guest_account_type", "personal")
 
 
 def render():
@@ -191,6 +209,16 @@ def render():
         st.caption("You're trying I/mpact as a guest — same questions, same "
                    "calculations, full results. A free account (any time "
                    "later) saves them and unlocks goals and streaks.")
+        # guests can still choose to assess a business before signing up
+        gtype = st.radio(
+            "Who is this assessment for?", ["personal", "business"],
+            index=0 if _new_account_type(user) == "personal" else 1,
+            format_func=lambda t: "A household (personal)" if t == "personal"
+            else "A business / organisation", horizontal=True,
+            key="guest_account_type_pick")
+        if gtype != st.session_state.get("guest_account_type"):
+            st.session_state["guest_account_type"] = gtype
+            st.session_state.pop("assessment_data", None)   # reshape the form
 
     if "assessment_data" not in st.session_state:
         prev = db.latest_assessment(user["id"]) if user else None
@@ -198,99 +226,107 @@ def render():
             # returning user (§6): reuse everything, land on the review hub
             st.session_state.assessment_data = copy.deepcopy(prev["inputs"])
             st.session_state.assessment_returning = True
-            st.session_state.wizard_step = REVIEW
         elif user is None and st.session_state.get("guest_inputs"):
             # returning guest in the same session: same review-hub treatment
             st.session_state.assessment_data = copy.deepcopy(
                 st.session_state["guest_inputs"])
             st.session_state.assessment_returning = True
-            st.session_state.wizard_step = REVIEW
         else:
-            st.session_state.assessment_data = default_assessment()
+            st.session_state.assessment_data = default_assessment(
+                _new_account_type(user))
             st.session_state.assessment_returning = False
-            st.session_state.wizard_step = 0
+        acct0 = _account_type(st.session_state.assessment_data)
+        st.session_state.wizard_step = (len(_steps(acct0)) - 1
+                                        if st.session_state.assessment_returning
+                                        else 0)
     data = st.session_state.assessment_data
-    step = st.session_state.get("wizard_step", 0)
+    acct = _account_type(data)
+    steps = _steps(acct)
+    review_idx = len(steps) - 1
+    step = min(st.session_state.get("wizard_step", 0), review_idx)
     returning = st.session_state.get("assessment_returning", False)
 
-    _stepper(step)
-    st.divider()
+    # §1: make the two assessment methods obvious at the very start.
+    if step == 0 and not returning:
+        measure_intro("manual")
 
-    current = STEPS[step]
-    if current == "General":
-        data["general"] = _render_general(data["general"])
-    elif current == "Water":
-        data["water"] = water.render(data["water"])
-    elif current == "Electricity":
-        data["electricity"] = electricity.render(data["electricity"])
-    elif current == "Transport":
-        data["transport"] = transport.render(data["transport"])
-    elif current == "Lifestyle":
-        data["lifestyle"] = lifestyle.render(data["lifestyle"])
-    else:
-        _render_review(user, data, returning)
-
-    st.session_state.assessment_data = data
-
-    if step < REVIEW:
+    # One readable band per wizard screen (§1-§2): the step's questions live
+    # on a content-sized panel and the illustrated world stays visible around
+    # it, instead of one page-length white sheet.
+    with st.container(key="band_wizard"):
+        _stepper(step, steps)
         st.divider()
-        left, mid, right = st.columns([1, 3, 1])
-        with left:
-            if step > 0 and st.button("← Back", use_container_width=True,
-                                      key="nav_back"):
-                _go_to_step(step - 1)
-        with mid:
-            if returning and st.button("Done — back to review",
-                                       use_container_width=True,
-                                       key="nav_review"):
-                _go_to_step(REVIEW)
-        with right:
-            if st.button("Next →", type="primary", use_container_width=True,
-                         key="nav_next"):
-                _go_to_step(step + 1)
+
+        if step == review_idx:
+            _render_review(user, data, returning, acct)
+        elif acct == "business":
+            renderers = [business.render_general, business.render_water,
+                         business.render_electricity, business.render_transport,
+                         business.render_operations]
+            data = renderers[step](data)
+        else:
+            if step == 0:
+                data["general"] = _render_general(data["general"])
+            elif step == 1:
+                data["water"] = water.render(data["water"])
+            elif step == 2:
+                data["electricity"] = electricity.render(data["electricity"])
+            elif step == 3:
+                data["transport"] = transport.render(data["transport"])
+            elif step == 4:
+                data["lifestyle"] = lifestyle.render(data["lifestyle"])
+
+        st.session_state.assessment_data = data
+
+        if step < review_idx:
+            st.divider()
+            left, mid, right = st.columns([1, 3, 1])
+            with left:
+                if step > 0 and st.button("← Back", use_container_width=True,
+                                          key="nav_back"):
+                    _go_to_step(step - 1)
+            with mid:
+                if returning and st.button("Done — back to review",
+                                           use_container_width=True,
+                                           key="nav_review"):
+                    _go_to_step(review_idx)
+            with right:
+                if st.button("Next →", type="primary",
+                             use_container_width=True, key="nav_next"):
+                    _go_to_step(step + 1)
 
 
 def _render_general(data):
     st.header("General")
     st.caption("Just enough to pick the right regional factors — nothing more.")
-    c1, c2 = st.columns(2)
-    with c1:
-        data["household_size"] = w.slider_int(
-            "How many people live in your household?", "hh_size",
-            data.get("household_size") or 1, minv=1, maxv=16,
-            help="Used to show fair per-person numbers next to household totals.")
-        data["country"] = w.text("Country", "country",
-                                 data.get("country") or "South Africa")
-    with c2:
-        data["region"] = w.text("Province / region (optional)", "region",
-                                data.get("region"))
-        data["municipality"] = w.text(
-            "Municipality or utility (optional)", "municipality",
-            data.get("municipality"),
-            help="Lets us convert bill amounts with the right block tariff "
-                 "(e.g. Cape Town, Johannesburg, eThekwini, Tshwane, Eskom).")
-    pending = st.session_state.pop("pending_general", None)
-    if pending and pending.get("municipality") and not data.get("municipality"):
-        data["municipality"] = pending["municipality"]
-        w.set_value("municipality", pending["municipality"])
-        st.info(f"Municipality picked up from your bill: **{data['municipality']}**")
+    data["household_size"] = w.slider_int(
+        "How many people live in your household?", "hh_size",
+        data.get("household_size") or 1, minv=1, maxv=16,
+        help="Used to show fair per-person numbers next to household totals.")
+    pending = st.session_state.get("pending_general")
+    if pending and pending.get("municipality"):
+        st.info(f"Your bill looks like it's from **{pending['municipality']}** — "
+                "pick the closest match below.")
+    st.subheader("Location")
+    location_picker(data, key_prefix="loc")
     return data
 
 
-def _render_review(user, data, returning):
+def _render_review(user, data, returning, acct="personal"):
     if returning:
         st.header("Welcome back — quick update")
         st.markdown(
-            "We kept your stable information (household, vehicle, home setup). "
-            "Sections marked **updates monthly** usually change between "
-            "check-ins — tap **Edit** on anything that's different, then "
-            "recalculate.")
+            "We kept your stable information. Sections marked **updates "
+            "monthly** usually change between check-ins — tap **Edit** on "
+            "anything that's different, then recalculate.")
     else:
         st.header("Review your answers")
         st.caption("Everything in one place — tap Edit to change a section.")
 
+    sections = business.SECTIONS if acct == "business" else _SECTIONS
+    row_fn = business.section_rows if acct == "business" else _section_rows
     cols = st.columns(2)
-    for idx, (title, icon_name, target_step, monthly) in enumerate(_SECTIONS):
+    for idx, (title, icon_name, target_step, monthly) in enumerate(sections):
         with cols[idx % 2], st.container(border=True):
             head, edit = st.columns([4, 1.1])
             badge = ("<span class='pill' style='font-size:.7rem'>updates "
@@ -299,7 +335,7 @@ def _render_review(user, data, returning):
                           f"{badge}", unsafe_allow_html=True)
             if edit.button("Edit", key=f"edit_{idx}", use_container_width=True):
                 _go_to_step(target_step)
-            rows = _section_rows(title, data)
+            rows = row_fn(title, data)
             if not rows:
                 st.caption("Nothing captured yet.")
             for label, val in rows:
@@ -312,6 +348,8 @@ def _render_review(user, data, returning):
                     unsafe_allow_html=True)
 
     st.divider()
+    from views.common import privacy_note
+    privacy_note("submit")
     c1, c2 = st.columns([2.2, 1])
     with c1:
         if st.button("Calculate my footprint", type="primary",
@@ -330,7 +368,7 @@ def _render_review(user, data, returning):
         if st.button("Start fresh instead", use_container_width=True,
                      key="btn_restart"):
             _reset_assessment_session()
-            st.session_state.assessment_data = default_assessment()
+            st.session_state.assessment_data = default_assessment(acct)
             st.session_state.assessment_returning = False
             st.session_state.wizard_step = 0
             st.rerun()

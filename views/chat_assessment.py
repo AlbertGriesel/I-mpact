@@ -7,7 +7,8 @@ import streamlit as st
 import ai
 from schema import (default_assessment, missing_important_fields,
                     is_calculable, completeness)
-from views.common import require_login, complete_assessment, achievement_toast
+from views.common import (require_login, complete_assessment,
+                          achievement_toast, measure_intro, privacy_note)
 
 _GREETING = ("Hi! I'm **Sprout** — let's figure out your environmental "
              "footprint together, in plain language.\n\n"
@@ -16,9 +17,22 @@ _GREETING = ("Hi! I'm **Sprout** — let's figure out your environmental "
              "water numbers (a prepaid receipt or bill amount works too)? "
              "If you don't know something, just say so — I'll work around it.")
 
+_GREETING_BUSINESS = (
+    "Hi! I'm **Sprout** — let's work out your business's environmental "
+    "footprint together, in plain language.\n\n"
+    "To start: what sector is the business in, roughly how many staff, and do "
+    "you know your monthly electricity or water figures (a bill amount works "
+    "too)? If you don't know something, just say so — I'll work around it.")
 
-def _display_history(history):
-    st.chat_message("assistant").markdown(_GREETING)
+
+def _greeting(data):
+    return (_GREETING_BUSINESS
+            if data.get("general", {}).get("account_type") == "business"
+            else _GREETING)
+
+
+def _display_history(history, data):
+    st.chat_message("assistant").markdown(_greeting(data))
     for msg in history:
         role = "user" if msg["role"] == "user" else "assistant"
         st.chat_message(role).markdown(msg.get("text", ""))
@@ -44,11 +58,18 @@ def render():
         return
 
     if "chat_data" not in st.session_state:
-        st.session_state.chat_data = default_assessment()
+        st.session_state.chat_data = default_assessment(
+            user.get("account_type", "personal"))
         st.session_state.chat_history = []
         st.session_state.chat_done = False
 
     data = st.session_state.chat_data
+
+    # §1: show the two-methods chooser before the conversation has begun.
+    if not st.session_state.chat_history:
+        measure_intro("chat")
+        privacy_note("chat")
+        st.divider()
 
     # progress + collected-data panel
     pct = completeness(data)
@@ -64,7 +85,7 @@ def render():
             if gaps:
                 st.caption("Still useful: " + "; ".join(h for _, h in gaps[:4]))
 
-    _display_history(st.session_state.chat_history)
+    _display_history(st.session_state.chat_history, data)
 
     ready = is_calculable(data) and (st.session_state.chat_done or pct >= 40)
     if ready:

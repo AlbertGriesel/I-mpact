@@ -24,12 +24,15 @@ import achievements as ach_mod
 from benchmarks import BENCHMARKS
 from comparisons import (water_comparison, electricity_comparison,
                          carbon_comparison)
-from goals import pick_weekly_goals, find_duplicate
+from goals import (find_duplicate, generate_goal_candidates,
+                   rank_candidate_goals)
 from views.common import (current_user, guest_assessment, PERIODS, from_month,
                           from_year, reminder_banner, achievement_toast,
                           render_achievement_cards)
-from visuals import (kpi_card, render_mascot, score_ring, pill, icon,
-                     celebrate, scroll_to_anchor)
+import avatar as av
+from visuals import (score_ring, pill, icon,
+                     celebrate, scroll_to_anchor, reservoir, sky_clearing,
+                     energy_tile, confidence_badge, env_tier, GREEN)
 
 _DONUT_COLORS = ["#2E9E63", "#7EC8E3", "#F2C14E", "#B0713C", "#1B5E3B",
                  "#57b97c", "#9aa3ad"]
@@ -90,22 +93,61 @@ def _ensure_eval_guest(results, inputs):
     return ai.fallback_eval(results), False
 
 
+def _ranked_opportunities(latest, r, n=3, active=None):
+    """Priority-ranked goal opportunities for the plan (§2). The AI relevance
+    overlay is fetched ONCE per assessment and cached in session (offline or
+    malformed → {} → deterministic ranking), so reruns stay fast and never
+    crash on bad AI output."""
+    inputs = latest["inputs"]
+    candidates = generate_goal_candidates(inputs, r)
+    cache_key = f"goal_overlay_{latest.get('id')}"
+    if cache_key not in st.session_state:
+        grounding = {"results": r, "household": inputs.get("general", {})}
+        st.session_state[cache_key] = ai.rank_goals(candidates, grounding)
+    overlay = st.session_state.get(cache_key) or {}
+    ranked = rank_candidate_goals(inputs, r, candidates, ai_overlay=overlay)
+    if active:
+        ranked = [g for g in ranked if not find_duplicate(g, active)]
+    return ranked[:n]
+
+
 # ======================== shared rendering helpers =========================
 
-def _render_hero(score, snapshot, refresh_cb=None):
-    """Top block: mascot + score ring + metric pills | short snapshot."""
+def _render_hero(score, snapshot, refresh_cb=None, user=None):
+    """Top block: the user's avatar + name and the score ring, side by side and
+    aligned (brief §8) | short AI snapshot. Guests see just the score ring. The
+    daisy mascot is intentionally not here — it belongs to guidance/loading
+    contexts, not the results snapshot (brief §1)."""
+    tier = env_tier(score["total"])
+    st.markdown("<div class='eyebrow'>Your living snapshot</div>",
+                unsafe_allow_html=True)
     left, right = st.columns([1, 1.25], gap="large")
     with left:
-        m1, m2 = st.columns([1.15, 1])
-        with m1:
-            render_mascot(score["total"], height=190, caption=False)
-        with m2:
-            st.markdown(score_ring(score["total"]), unsafe_allow_html=True)
+        if user is not None:
+            a, cc = st.columns([1, 1])
+            with a:
+                st.markdown(
+                    f"<div class='hero-identity' style='padding-top:.4rem'>"
+                    f"{av.avatar_html(user, tier=tier, size=132)}"
+                    f"<div class='hero-name' style='font-size:1.1rem'>"
+                    f"{user['display_name']}</div></div>",
+                    unsafe_allow_html=True)
+            with cc:
+                st.markdown(
+                    f"<div style='display:flex;justify-content:center;"
+                    f"padding-top:.3rem'>{score_ring(score['total'])}</div>",
+                    unsafe_allow_html=True)
+        else:
+            st.markdown(
+                f"<div style='display:flex;justify-content:center'>"
+                f"{score_ring(score['total'])}</div>", unsafe_allow_html=True)
         st.markdown(
-            pill(f"Water {score['water']}", "water")
+            "<div style='display:flex;justify-content:center;flex-wrap:wrap;"
+            "gap:.4rem;margin-top:.6rem'>"
+            + pill(f"Water {score['water']}", "water")
             + pill(f"Electricity {score['electricity']}", "bolt")
-            + pill(f"Carbon {score['carbon']}", "cloud"),
-            unsafe_allow_html=True)
+            + pill(f"Carbon {score['carbon']}", "cloud")
+            + "</div>", unsafe_allow_html=True)
     with right, st.container(key="band_snapshot"):
         head, refresh = st.columns([5, 1])
         head.markdown("#### Your snapshot")
@@ -125,33 +167,83 @@ def _render_hero(score, snapshot, refresh_cb=None):
                 unsafe_allow_html=True)
 
 
-def _render_kpis(r, period, deltas=None):
-    """KPI cards for water / electricity / carbon in the chosen period."""
+def _eco_extra(delta_tuple, benchmark, conf):
+    """The delta / benchmark / confidence line folded under an eco tile so the
+    playful visual keeps every bit of the old KPI card's information (§8)."""
+    parts = []
+    if delta_tuple and delta_tuple[0]:
+        col = "#1d8a4e" if delta_tuple[1] else "#c05621"
+        parts.append(f"<span style='color:{col};font-weight:700'>"
+                     f"{delta_tuple[0]}</span>")
+    if benchmark:
+        parts.append(f"<span>{benchmark}</span>")
+    line = "<br>".join(parts)
+    badge = confidence_badge(conf)
+    if badge:
+        line += f"<div style='margin-top:.3rem'>{badge}</div>"
+    return line
+
+
+def _render_kpis(r, period, deltas=None, general=None):
+    """Primary metrics as living scenes (§8): water fills a reservoir, carbon
+    clears the sky, electricity gets a sunlit tile — each still carrying its
+    exact value, period, trend, benchmark and confidence. Business accounts get
+    per-m² / per-employee framing against the sector benchmark (§5)."""
     wtr, e, c = r["water"], r["electricity"], r["carbon"]
     wd, ed, cd = deltas or ((None, True), (None, True), (None, True))
     water_v = from_month(wtr["total_water_litres_month"], period)
     elec_v = from_month(e["total_electricity_kwh_month"], period)
     carbon_v = from_year(c["net_co2e_kg_year"], period)
+    # The carbon component can exceed 100 (net positive, §18): the sky is
+    # fully clear at 100 and the tile notes the net-positive state explicitly
+    # rather than silently flattening it.
+    carbon_score = r["score"].get("carbon", 50) or 50
+    cleanliness = max(0.0, min(1.0, carbon_score / 100))
+
+    is_business = (general or {}).get("account_type") == "business"
+    if is_business:
+        from benchmarks import business_sector_benchmark
+        bench = business_sector_benchmark((general or {}).get("sector"))
+        wpm2 = wtr.get("litres_per_m2_year")
+        epm2 = e.get("kwh_per_m2_year")
+        cpe = c.get("per_employee_co2e_kg_year")
+        water_fill = (max(0.05, min(1.0, 1 - wpm2 / (bench["water_l_m2"] * 2)))
+                      if wpm2 else 0.5)
+        water_sub = (f"{wpm2:,.0f} L/m²/yr · sector ≈ {bench['water_l_m2']:,.0f}"
+                     if wpm2 else "add floor area for a per-m² comparison")
+        elec_sub = (f"{epm2:,.0f} kWh/m²/yr · sector ≈ {bench['kwh_m2']:,.0f} · "
+                    f"{e['renewable_share_percent']}% renewable" if epm2 else
+                    f"{e['renewable_share_percent']}% renewable · add floor area "
+                    "for a per-m² comparison")
+        carbon_sub = (f"Per employee {cpe:,.0f} kg/yr · sector ≈ "
+                      f"{bench['co2_employee']:,.0f}" if cpe else
+                      "add employee count for a per-employee comparison")
+    else:
+        # reservoir fills as per-person use drops below ~2× the SA benchmark
+        water_fill = max(0.05, min(1.0, 1 - wtr["water_litres_person_day"] / 436))
+        water_sub = (f"{wtr['water_litres_person_day']:.0f} L/person/day · SA "
+                     "benchmark 218")
+        elec_sub = (f"~350 kWh/month SA average · "
+                    f"{e['renewable_share_percent']}% renewable")
+        carbon_sub = (f"Per person {c['per_person_co2e_kg_year']:,.0f} kg/yr (SA "
+                      "context ≈ 7,600 incl. industry)")
+        if carbon_score > 100:
+            carbon_sub = ("Net positive — offsets exceed your emissions · "
+                          + carbon_sub)
 
     k1, k2, k3 = st.columns(3)
-    k1.markdown(kpi_card(
-        "water", "Water", _fmt(water_v), f"L / {period}",
-        delta_text=wd[0], delta_good=wd[1],
-        benchmark_text=f"{wtr['water_litres_person_day']:.0f} L/person/day · "
-                       "SA benchmark 218",
-        conf=wtr["confidence"]), unsafe_allow_html=True)
-    k2.markdown(kpi_card(
-        "bolt", "Electricity", _fmt(elec_v), f"kWh / {period}",
-        delta_text=ed[0], delta_good=ed[1],
-        benchmark_text=f"~350 kWh/month approx. SA household average · "
-                       f"{e['renewable_share_percent']}% renewable",
-        conf=e["confidence"]), unsafe_allow_html=True)
-    k3.markdown(kpi_card(
-        "cloud", "Carbon (net)", _fmt(carbon_v), f"kg CO₂e / {period}",
-        delta_text=cd[0], delta_good=cd[1],
-        benchmark_text=f"Per person {c['per_person_co2e_kg_year']:,.0f} kg/yr "
-                       "(SA context ≈ 7,600 incl. industry)",
-        conf=c["calculation_confidence"]), unsafe_allow_html=True)
+    k1.markdown(reservoir(
+        water_fill, _fmt(water_v), f"L / {period}", "Water",
+        sublabel=_eco_extra(wd, water_sub, wtr["confidence"])),
+        unsafe_allow_html=True)
+    k2.markdown(energy_tile(
+        _fmt(elec_v), f"kWh / {period}", "Electricity",
+        sublabel=_eco_extra(ed, elec_sub, e["confidence"])),
+        unsafe_allow_html=True)
+    k3.markdown(sky_clearing(
+        _fmt(carbon_v), f"kg CO₂e / {period}", "Carbon (net)", cleanliness,
+        sublabel=_eco_extra(cd, carbon_sub, c["calculation_confidence"])),
+        unsafe_allow_html=True)
     return water_v, elec_v, carbon_v
 
 
@@ -161,6 +253,46 @@ def _render_compare(water_v, elec_v, carbon_v, period):
         st.markdown("- " + water_comparison(water_v, period))
         st.markdown("- " + electricity_comparison(elec_v, period))
         st.markdown("- " + carbon_comparison(carbon_v, period))
+
+
+def _trend_chart(df, ycol, color):
+    """A soft, rounded, interactive trend line (spec §12-13): monotone curve
+    with round caps, a gentle area fill, hover TRACKING (nearest point lights
+    up with a soft guide rule — no need to hit a dot exactly), readable labels
+    and a rounded tooltip — not a blocky default chart."""
+    dark = st.session_state.get("theme", "light") == "dark"
+    axis_col = "#c7d3d0" if dark else "#3f544c"
+    grid_col = "#2a3a44" if dark else "#dfeae4"
+    hover = alt.selection_point(nearest=True, on="mouseover",
+                                fields=["date"], empty=False, clear="mouseout")
+    base = alt.Chart(df).encode(
+        x=alt.X("date:T", title=None,
+                axis=alt.Axis(labelFontSize=14, labelColor=axis_col,
+                              format="%d %b", labelAngle=0, tickCount=5,
+                              grid=False, domainColor=grid_col)),
+        y=alt.Y(f"{ycol}:Q", title=None,
+                axis=alt.Axis(labelFontSize=14, labelColor=axis_col,
+                              gridColor=grid_col, gridDash=[2, 4], tickCount=4,
+                              domain=False)))
+    area = base.mark_area(interpolate="monotone", color=color, opacity=0.14)
+    line = base.mark_line(interpolate="monotone", strokeWidth=3.5, color=color,
+                          strokeCap="round", strokeJoin="round")
+    # invisible wide selectors so hovering ANYWHERE near a date engages it
+    selectors = base.mark_point(size=600, opacity=0).add_params(hover)
+    # soft vertical guide at the hovered date
+    rule = base.mark_rule(color=color, strokeWidth=1.4, strokeDash=[3, 5],
+                          opacity=0.55).transform_filter(hover)
+    tooltip = [alt.Tooltip("date:T", title="Date", format="%d %b %Y"),
+               alt.Tooltip(f"{ycol}:Q", title=ycol, format=",.0f")]
+    pts = base.mark_point(filled=True, color=color, stroke="white",
+                          strokeWidth=1.6).encode(
+        size=alt.condition(hover, alt.value(240), alt.value(95)),
+        opacity=alt.condition(hover, alt.value(1.0), alt.value(0.85)),
+        tooltip=tooltip)
+    chart = (area + line + rule + selectors + pts).properties(
+        height=250).configure_view(
+        strokeWidth=0, fill="transparent").configure(background="transparent")
+    st.altair_chart(chart, use_container_width=True, theme=None)
 
 
 def _render_donut(c):
@@ -175,18 +307,38 @@ def _render_donut(c):
         st.caption("No carbon sources captured yet.")
         return
     src = pd.DataFrame(rows)
+    dark = st.session_state.get("theme", "light") == "dark"
+    txt = "#e6edf0" if dark else "#22423A"
+    # §11 — hovering a segment lifts it and dims the others; the tooltip is
+    # rounded and readable, the legend swatches are circular.
+    hover = alt.selection_point(on="mouseover", fields=["Category"], empty=True)
+    # §11 — hovered segment is emphasised (neighbours dim, hovered one grows a
+    # touch via its outer radius) with a rounded tooltip. NOTE: we intentionally
+    # do NOT use the `radiusOffset` channel — it isn't supported by the pinned
+    # Altair/Vega-Lite build and raised a TypeError that aborted the whole
+    # dashboard render. A conditional outer radius gives the same "lift" safely.
     donut = alt.Chart(src).mark_arc(
-        innerRadius=62, cornerRadius=5, padAngle=0.02,
+        cornerRadius=9, padAngle=0.03, stroke="white", strokeWidth=2,
     ).encode(
         theta=alt.Theta("kg CO₂e/year:Q"),
+        radius=alt.Radius("kg CO₂e/year:Q", scale=alt.Scale(type="sqrt",
+                          range=[64, 112])),
         color=alt.Color(
             "Category:N",
             scale=alt.Scale(range=_DONUT_COLORS),
-            legend=alt.Legend(orient="bottom", columns=2,
-                              labelLimit=180, title=None)),
-        tooltip=["Category", "kg CO₂e/year", "Share"],
-    ).properties(height=300)
-    st.altair_chart(donut, use_container_width=True)
+            legend=alt.Legend(orient="bottom", columns=2, labelLimit=220,
+                              title=None, labelColor=txt, labelFontSize=15,
+                              symbolType="circle", symbolSize=190)),
+        opacity=alt.condition(hover, alt.value(1.0), alt.value(0.5)),
+        stroke=alt.condition(hover, alt.value("#ffffff"), alt.value("white")),
+        strokeWidth=alt.condition(hover, alt.value(3.5), alt.value(2)),
+        tooltip=[alt.Tooltip("Category:N", title="Source"),
+                 alt.Tooltip("kg CO₂e/year:Q", title="kg CO₂e/year", format=",.0f"),
+                 alt.Tooltip("Share:N", title="Share")],
+    ).add_params(hover).properties(height=310).configure_view(
+        strokeWidth=0, fill="transparent",
+    ).configure(background="transparent").configure_legend(labelColor=txt)
+    st.altair_chart(donut, use_container_width=True, theme=None)
     biggest = max(br, key=br.get)
     st.caption(f"Largest source: **{biggest.replace('_', ' ')}** — "
                f"{br[biggest]:,.0f} kg/year "
@@ -223,9 +375,64 @@ def _tblock(icon_name, title, entered, how, affects):
         unsafe_allow_html=True)
 
 
+def _render_transparency_business(inputs, r):
+    """Plain-language transparency for a business (§5/§18)."""
+    g, b = inputs["general"], inputs.get("business", {})
+    wtr, e, c = r["water"], r["electricity"], r["carbon"]
+    with st.expander("How your numbers were calculated"):
+        st.markdown(
+            "<div style='font-size:.92rem;color:#3c4f48;padding:.2rem 0 .4rem'>"
+            "Every figure is an <b>estimate</b> from what you entered and "
+            "published conversion factors. Bills and meter readings make it "
+            "precise; where they're missing we estimate from your sector and "
+            "floor area (clearly labelled).</div>", unsafe_allow_html=True)
+        wm = wtr.get("calculation_method")
+        _tblock("water", "Water",
+                "your metered water" if wm and "measured" in wm
+                else ("your water bill amount" if wm == "bill_amount_tariff"
+                      else "no meter reading — estimated from your sector"),
+                "We total premises water (plus any process/irrigation water you "
+                "gave) and, where floor area is known, compare it per-m² to "
+                "your sector's typical intensity.",
+                "Sector estimates are rough; a metered reading sharpens them.")
+        em = e.get("calculation_method")
+        _tblock("bolt", "Electricity",
+                "your metered kWh" if em and "measured" in em
+                else ("your electricity spend" if em == "bill_amount_tariff"
+                      else "no meter reading — estimated from your sector"),
+                "Grid units are multiplied by South Africa's ~0.9 kg CO₂e/kWh "
+                "factor; your renewable share is counted clean. Intensity is "
+                "compared per-m² and per-employee to your sector.",
+                "Operating hours, equipment and seasonality all move this.")
+        if (inputs["transport"].get("fleet") or []):
+            _tblock("car", "Fleet",
+                    "your company vehicles, their fuel and annual distance",
+                    "Distance × fuel economy × the same fuel factors used "
+                    "everywhere in the app, summed across the fleet.",
+                    "Real-world consumption differs from catalogue figures.")
+        if b.get("waste_kg_month") or b.get("food_waste_kg_month"):
+            _tblock("leaf", "Waste",
+                    "your monthly waste (and recycling share)",
+                    "Landfilled waste uses a published emission factor; the "
+                    "recycled share is credited at a much lower factor.",
+                    "Food-waste emissions in particular vary by disposal route.")
+        notes = [n for n in (wtr["notes"] + e["notes"] + c["notes"]) if n]
+        if notes:
+            st.markdown("<div style='font-weight:700;color:#22423A;"
+                        "font-size:.9rem;padding-top:.45rem'>Assumptions we "
+                        "made</div>", unsafe_allow_html=True)
+            for note in notes:
+                st.markdown(f"<div style='font-size:.85rem;color:#5c7069;"
+                            f"padding:.08rem 0 .08rem .6rem'>• "
+                            f"{_friendly_note(note)}</div>",
+                            unsafe_allow_html=True)
+
+
 def _render_transparency(inputs, r):
     """§5/§18: a transparent explanation for a normal person — what went in,
     how it was converted, and why it might not be exact. No backend language."""
+    if inputs["general"].get("account_type") == "business":
+        return _render_transparency_business(inputs, r)
     g = inputs["general"]
     w_in, e_in = inputs["water"], inputs["electricity"]
     t_in, l_in = inputs["transport"], inputs["lifestyle"]
@@ -416,15 +623,16 @@ def _render_transparency(inputs, r):
 
         # ------------------------------------------- confidence explainer
         st.markdown(
-            "<div style='font-size:.9rem;color:#3c4f48;line-height:1.5'>"
-            "<span style='font-weight:700;color:#22423A'>What the "
-            "confidence labels mean:</span> "
-            "<span class='conf-badge conf-HIGH'>HIGH</span> comes from a "
-            "bill or meter reading. "
-            "<span class='conf-badge conf-MEDIUM'>MEDIUM</span> was "
-            "converted from an amount you spent. "
-            "<span class='conf-badge conf-LOW'>LOW</span> is a broad "
-            "estimate from typical usage.</div>",
+            "<div style='font-size:.9rem;color:#3c4f48;line-height:1.6'>"
+            "<span style='font-weight:700;color:#22423A'>How precise are "
+            "these numbers?</span> "
+            "<span class='conf-badge conf-HIGH'>Measured</span> means it came "
+            "from a bill or meter reading. "
+            "<span class='conf-badge conf-MEDIUM'>Estimated</span> means we "
+            "worked it out from an amount you spent. "
+            "<span class='conf-badge conf-LOW'>Approximate estimate</span> "
+            "means we used typical usage patterns — all are useful, and "
+            "entering a recent bill makes them more precise.</div>",
             unsafe_allow_html=True)
         if wtr.get("optional_water_co2e_kg_year"):
             st.markdown(
@@ -499,7 +707,7 @@ def _render_guest():
                           label_visibility="collapsed",
                           help="Cards, charts and comparisons all follow "
                                "this period.")
-    water_v, elec_v, carbon_v = _render_kpis(r, period)
+    water_v, elec_v, carbon_v = _render_kpis(r, period, general=inputs["general"])
     _render_compare(water_v, elec_v, carbon_v, period)
 
     ch1, ch2 = st.columns([1, 1.15], gap="large")
@@ -571,7 +779,7 @@ def render():
         db.set_assessment_eval(latest["id"], None)
 
     snapshot, _live = _ensure_eval(latest)
-    _render_hero(r["score"], snapshot, refresh_cb=_refresh_eval)
+    _render_hero(r["score"], snapshot, refresh_cb=_refresh_eval, user=user)
 
     # ================= KPI row with period selector ========================
     h1, h2 = st.columns([3, 1])
@@ -593,7 +801,8 @@ def render():
             _delta(r["carbon"]["net_co2e_kg_year"],
                    pr["carbon"]["net_co2e_kg_year"]),
         )
-    water_v, elec_v, carbon_v = _render_kpis(r, period, deltas)
+    water_v, elec_v, carbon_v = _render_kpis(r, period, deltas,
+                                             general=latest["inputs"]["general"])
 
     # ================= band: relatable comparisons =========================
     _render_compare(water_v, elec_v, carbon_v, period)
@@ -612,14 +821,11 @@ def render():
             st.caption("Trends appear after your second check-in.")
         t1, t2, t3 = st.tabs(["Water", "Electricity", "Carbon"])
         with t1:
-            st.line_chart(df, x="date", y="Water (L)", color="#7EC8E3",
-                          height=230)
+            _trend_chart(df, "Water (L)", "#3E9BD6")
         with t2:
-            st.line_chart(df, x="date", y="Electricity (kWh)", color="#F2C14E",
-                          height=230)
+            _trend_chart(df, "Electricity (kWh)", "#E8A62E")
         with t3:
-            st.line_chart(df, x="date", y="Carbon (kg CO₂e)", color="#2E9E63",
-                          height=230)
+            _trend_chart(df, "Carbon (kg CO₂e)", "#2E9E63")
     with ch2:
         _render_donut(r["carbon"])
 
@@ -652,24 +858,23 @@ def render():
         if not week_goals:
             st.caption("No goals yet this week — add one below.")
 
-        # more opportunities from the deterministic engine, dedupe-filtered
-        candidates = pick_weekly_goals(latest["inputs"], r, n=6)
+        # more opportunities, priority-ranked (§2) and dedupe-filtered
         active = week_goals + [g for g in db.all_goals(user["id"])
                                if g["status"] == "active"]
-        fresh = [g for g in candidates if not find_duplicate(g, active)][:3]
+        fresh = _ranked_opportunities(latest, r, n=3, active=active)
         if fresh:
             st.markdown("<div style='margin-top:.4rem;font-weight:700;"
-                        "color:#1B5E3B'>More opportunities from your data</div>",
+                        "color:#1B5E3B'>Top opportunities for you, ranked</div>",
                         unsafe_allow_html=True)
             for i, g in enumerate(fresh):
                 cc1, cc2 = st.columns([4.2, 1])
-                why = f" — {g['rationale']}" if g.get("rationale") else ""
+                reason = g.get("reason") or "A practical step from your data."
                 saving = (f" · ~{g['expected_saving']:.0f} "
                           f"{g['expected_saving_unit']}"
                           if g.get("expected_saving") else "")
                 cc1.markdown(f"**{g['title']}**{saving}  \n"
                              f"<span style='font-size:.82rem;color:#5c7069'>"
-                             f"Why: it targets your data directly{why}.</span>",
+                             f"{reason}</span>",
                              unsafe_allow_html=True)
                 if cc2.button("Add", key=f"add_cand_{i}",
                               use_container_width=True):

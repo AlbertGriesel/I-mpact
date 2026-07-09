@@ -34,6 +34,8 @@ def _clear_bill_values(data):
 
 
 def _upload_path(data):
+    from views.common import privacy_note
+    privacy_note("upload")
     note = ai.provider_privacy_note()
     if note:
         st.caption(note)
@@ -191,9 +193,23 @@ def render(data):
     else:
         data = _manual_path(data)
 
+    data = renewable_and_backup(data)
+
+    has_measured = bool(data.get("kwh_month") or data.get("bill_rand"))
+    if not has_measured:
+        _appliance_estimate_form(data)
+    else:
+        st.success("Measured electricity captured — appliance questions skipped.")
+    return data
+
+
+def renewable_and_backup(data, *, renewable_label=None):
+    """Renewable + backup-power sub-section, shared by the household and
+    business electricity steps (solar, generators and loadshedding backup
+    matter for both)."""
     st.subheader("Renewable electricity")
     data["renewable_source"] = w.select(
-        "Does your household generate renewable electricity?", "renew_src",
+        renewable_label or "Do you generate renewable electricity?", "renew_src",
         OPTIONS["renewable_source"], data.get("renewable_source", "None"))
     if data["renewable_source"] != "None":
         data["renewable_percentage"] = w.slider_int(
@@ -254,12 +270,14 @@ def render(data):
                 default_charge)
         st.caption("Grid-charged backup is already inside your bill's kWh — we "
                    "never count it twice.")
+    return data
 
-    has_measured = bool(data.get("kwh_month") or data.get("bill_rand"))
-    if not has_measured:
-        st.subheader("Quick estimate instead")
-        st.caption("No measured data, so we estimate from your major appliances "
-                   "(labelled LOW confidence — a single bill upload beats this).")
+
+def _appliance_estimate_form(data):
+    st.subheader("Quick estimate instead")
+    st.caption("No measured data, so we estimate from your major appliances "
+               "(labelled LOW confidence — a single bill upload beats this).")
+    if True:
         data["home_size"] = w.text(
             "Home size (e.g. 3-bedroom house, 80 m² flat)", "home_size",
             data.get("home_size"))
@@ -308,6 +326,4 @@ def render(data):
                     maxv=24.0)
         st.caption("A 150 kWh/month base load (fridge, lights, electronics) is "
                    "added automatically — a rough MVP assumption.")
-    else:
-        st.success("Measured electricity captured — appliance questions skipped.")
     return data

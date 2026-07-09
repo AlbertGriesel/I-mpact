@@ -26,6 +26,7 @@ for both providers.
 
 import json
 import os
+import re
 
 try:
     import anthropic
@@ -41,6 +42,22 @@ except ImportError:
 
 ANTHROPIC_MODEL = "claude-opus-4-8"
 GEMINI_MODEL = "gemini-2.5-flash"   # free-tier, vision + JSON capable
+AVATAR_MODEL = "gemini-2.5-flash-image"   # image generation ("nano banana")
+
+# Canonical avatar-generation spec (spec §12). Sent verbatim to the image model.
+_AVATAR_PROMPT = """Create a stylised cartoon or illustrated avatar based on the uploaded person's likeness.
+
+Preserve the person's core recognisable characteristics: face shape, skin tone, hair colour, hairstyle, glasses, and distinctive visible accessories.
+
+Do not create a photorealistic image. Use a clean, modern flat-illustration or lightly shaded digital-art style with rounded forms, clean silhouettes, soft shading, a warm expression and strong readability at small sizes.
+
+Crop: head and shoulders, centred, facing forward or in a subtle 3/4 view.
+Expression: friendly, neutral-to-positive, a subtle natural smile.
+Output: a square 1:1 image, transparent or simple brand-compatible background, no text, no watermark, no logo.
+
+Do not alter apparent age, ethnicity, body type, or recognisable facial identity.
+
+The visual style should be friendly and ecological — clean rounded vector shapes with a soft, optimistic, nature-adjacent palette (leafy greens, sky blues, warm neutrals), consistent with a modern environmental app."""
 
 _anthropic_client = None
 _anthropic_error = None
@@ -336,8 +353,14 @@ def _parse_json_lenient(text):
 def _collect_system(data, missing):
     gaps = "\n".join(f"- {path}: {hint}" for path, hint in missing) \
         or "(none — you may finish)"
+    is_business = data.get("general", {}).get("account_type") == "business"
+    audience = ("a BUSINESS / organisation — ask about the business (sector, "
+                "staff, premises, fleet, operations), never about a household "
+                "or diet"
+                if is_business else
+                "South African and broader African households")
     return f"""You are Sprout, the friendly assessment assistant of an environmental
-impact tracker built for South African and broader African households.
+impact tracker. This assessment is for {audience}.
 
 Your ONLY job is to collect the structured data the deterministic calculator
 needs. You never calculate footprints and you NEVER invent, assume or round up
@@ -363,7 +386,14 @@ RULES
    (Cape Town->CPT, Johannesburg->JNB, Durban->DUR, London Heathrow->LHR, ...).
 5. When the user gives a bill amount in rand instead of consumption, record the
    rand amount — the calculator converts it with municipal tariffs.
-6. Finish once every remaining gap is optional or the user can't answer. Keep
+6. LOCATION: record country/region/municipality only with real, standard names
+   (country "South Africa", not "SA"; a genuine province/state; a genuine local
+   authority). If the user is vague or you're unsure which place they mean, ASK
+   — never guess. Only record a municipality when you're confident it's real for
+   their region; otherwise leave it out. The app rejects unrecognised or
+   ambiguous values and reports that back to you — re-ask rather than resubmit
+   the same value.
+7. Finish once every remaining gap is optional or the user can't answer. Keep
    it under about 10 minutes total.
 
 CURRENT COLLECTED STATE (JSON):
@@ -417,6 +447,12 @@ constraints. Respect their circumstances (budget, renting vs owning,
 loadshedding, transport options). Use concrete numbers ONLY when the supplied
 deterministic data supports them; otherwise say what measurement is needed.
 You never change the user's data or goals yourself — you propose, they confirm.
+When you propose a goal, describe the ACTION and why it fits — do NOT state an
+expected-saving figure. The app computes and attaches any verified saving from
+its own deterministic factors; a number you invent would be discarded.
+When the grounding shows a category is estimated rather than measured, be
+honest that your explanation is based on the information available and that a
+bill or meter reading would sharpen it — do not present estimates as exact.
 Keep replies under ~200 words, warm and practical. Never recalculate the
 footprint; the app's engine owns the numbers."""
 
@@ -425,14 +461,13 @@ OUTPUT FORMAT — respond with a single JSON object, nothing else:
 {
   "reply": "your practical, warm answer (markdown ok)",
   "proposed_goals": [
-    {"title": "...", "metric": "water|electricity|carbon",
-     "target_value": number-or-null, "target_unit": "string-or-null",
-     "expected_saving": number-or-null, "expected_saving_unit": "string-or-null"}
+    {"title": "...", "metric": "water|electricity|carbon"}
   ]
 }
-Prefer goals from the deterministic candidate list you were given; only include
-expected_saving when it comes from that list or the supplied results. Use an
-empty array when you're not proposing a goal this turn."""
+Prefer actions that match the deterministic candidate list you were given (the
+app attaches their verified savings automatically). Do NOT include any expected
+saving — the app computes it; a figure you supply is ignored. Use an empty
+array when you're not proposing a goal this turn."""
 
 _EXTRACT_SYSTEM = """You read utility documents for an environmental tracker in
 South Africa (municipal water bills, electricity bills, prepaid electricity
@@ -497,18 +532,17 @@ _FINISH_TOOL = {
 }
 _PLANNER_TOOL = {
     "name": "propose_goal",
-    "description": ("Propose ONE specific, measurable weekly goal. The app "
+    "description": ("Propose ONE specific, measurable weekly action. The app "
                     "shows it with an 'Add goal' button — the user decides; you "
-                    "never change their data directly."),
+                    "never change their data directly. Give the action and its "
+                    "metric only; the app computes and attaches any verified "
+                    "saving from its own factors, so do NOT supply a saving "
+                    "figure."),
     "input_schema": {
         "type": "object",
         "properties": {
             "title": {"type": "string"},
             "metric": {"type": "string", "enum": ["water", "electricity", "carbon"]},
-            "target_value": {"type": ["number", "null"]},
-            "target_unit": {"type": ["string", "null"]},
-            "expected_saving": {"type": ["number", "null"]},
-            "expected_saving_unit": {"type": ["string", "null"]},
         },
         "required": ["title", "metric"],
     },
@@ -626,12 +660,91 @@ def _gemini_chat_collect(history, data):
 # 2. Environmental analysis
 # ===========================================================================
 
+_SCORING_NOTE = (
+    "\n\nSCORING — use this interpretation exactly and consistently: the impact "
+    "score means roughly 50 = AVERAGE impact for the benchmark population, "
+    "100 = NET-ZERO environmental impact under the app's methodology, and ABOVE "
+    "100 = genuinely NET-POSITIVE (offsets/removals exceed emissions). Higher is "
+    "better. Do not call ~50 'good' — it is average. Never describe a score >100 "
+    "as impossible or cap it; treat it as a real net-positive result.")
+
+
+def _account_type_of(general):
+    return (general or {}).get("account_type", "personal")
+
+
+def _category_source(method):
+    """Classify how a category's number was obtained, from its
+    calculation_method, so the analysis can be honest about data quality."""
+    m = str(method or "").lower()
+    if "measured" in m:
+        return "measured"
+    if "tariff" in m or "bill_amount" in m:
+        return "estimated from spend"
+    return "estimated"
+
+
+def data_completeness(results):
+    """Summarise which categories are measured vs estimated vs missing so the
+    AI can be explicit that a result is based on the information available and
+    can name the important gaps — WITHOUT inventing any values (brief §6)."""
+    w, e, c = (results.get("water", {}), results.get("electricity", {}),
+               results.get("carbon", {}))
+    water_src = _category_source(w.get("calculation_method"))
+    elec_src = _category_source(e.get("calculation_method"))
+    measured = [n for n, s in (("water", water_src), ("electricity", elec_src))
+                if s == "measured"]
+    estimated = [n for n, s in (("water", water_src), ("electricity", elec_src))
+                 if s != "measured"]
+    # a category with no captured detail beyond the fallback baseline
+    missing = []
+    if water_src == "estimated" and (w.get("confidence") in ("LOW", "VERYLOW")):
+        missing.append("water")
+    if elec_src == "estimated" and (e.get("confidence") in ("LOW", "VERYLOW")):
+        missing.append("electricity")
+    return {
+        "water_source": water_src,
+        "electricity_source": elec_src,
+        "carbon_confidence": c.get("calculation_confidence"),
+        "measured_categories": measured,
+        "estimated_categories": estimated,
+        "no_measured_data_categories": missing,
+    }
+
+
+def _completeness_note(results):
+    """A short, prompt-side instruction telling the model to frame the analysis
+    around the AVAILABLE information and to acknowledge gaps once, briefly."""
+    dc = data_completeness(results)
+    lines = [
+        "\n\nDATA COMPLETENESS — the figures below are estimates built from what "
+        "the user actually provided:",
+        f"- Measured (from a bill/meter): {', '.join(dc['measured_categories']) or 'none'}.",
+        f"- Estimated: {', '.join(dc['estimated_categories']) or 'none'}.",
+    ]
+    if dc["no_measured_data_categories"]:
+        lines.append(
+            "- No measured data (used fallback/behavioural estimates): "
+            + ", ".join(dc["no_measured_data_categories"]) + ".")
+    lines.append(
+        "Open with framing such as \"Based on the information you provided…\". "
+        "Where a key category is estimated rather than measured, note ONCE, "
+        "briefly, that adding that bill/reading would make the estimate more "
+        "complete. Do NOT present this as a comprehensive measurement of the "
+        "user's total impact, and do NOT invent any missing values.")
+    return "\n".join(lines)
+
+
 def analyze_results(results, general, benchmarks_info):
     """LLM interpretation of deterministic results. Returns (ok, text)."""
+    import app_knowledge as appk
     prov = active_provider()
     payload = {"user_results": results, "household": general,
-               "benchmarks": benchmarks_info}
+               "benchmarks": benchmarks_info,
+               "data_completeness": data_completeness(results)}
     user_msg = "USER RESULTS:\n" + json.dumps(payload, indent=1)
+    system = (_ANALYSIS_SYSTEM + appk.analysis_context(_account_type_of(general))
+              + _SCORING_NOTE + _completeness_note(results))
     try:
         if prov == "anthropic":
             client = _get_anthropic_client()
@@ -639,7 +752,7 @@ def analyze_results(results, general, benchmarks_info):
                 return False, _anthropic_error or "AI unavailable."
             response = client.messages.create(
                 model=ANTHROPIC_MODEL, max_tokens=12000,
-                thinking={"type": "adaptive"}, system=_ANALYSIS_SYSTEM,
+                thinking={"type": "adaptive"}, system=system,
                 messages=[{"role": "user", "content": user_msg}])
             if response.stop_reason == "refusal":
                 return False, "AI analysis unavailable for this request."
@@ -650,7 +763,7 @@ def analyze_results(results, general, benchmarks_info):
                 return False, _gemini_error or "AI unavailable."
             resp = client.models.generate_content(
                 model=GEMINI_MODEL, contents=user_msg,
-                config=_gemini_config(system=_ANALYSIS_SYSTEM))
+                config=_gemini_config(system=system))
             return True, (resp.text or "").strip()
         return False, ai_status()[1]
     except Exception as exc:  # noqa: BLE001
@@ -663,12 +776,17 @@ never recalculate them, never invent numbers.
 
 Produce a VERY SHORT evaluation as JSON with exactly these keys:
 {"overall": "...", "positive": "...", "concern": "...", "recommendation": "..."}
-- overall: one warm sentence summarising where the user stands (max 22 words).
+- overall: one warm sentence summarising where the user stands, framed around
+  the information available (e.g. "Based on what you've shared…") (max 24 words).
 - positive: their single biggest positive point (max 18 words).
-- concern: their single biggest concern, stated kindly (max 18 words).
+- concern: their single biggest concern, stated kindly (max 18 words). If a key
+  category is estimated rather than measured, this is a good place to note —
+  once, briefly — that adding that bill/reading would sharpen the picture.
 - recommendation: the single highest-priority practical action (max 18 words).
-Ground every statement in the supplied numbers and confidence labels. Plain
-language, no jargon, no guilt. Respond with the JSON object only."""
+Ground every statement in the supplied numbers and confidence labels. Never
+present the result as a complete measurement of total impact when key data is
+estimated, and never invent missing numbers. Plain language, no jargon, no
+guilt. Respond with the JSON object only."""
 
 _EVAL_SCHEMA = {
     "type": "object",
@@ -687,10 +805,14 @@ def short_eval(results, general, benchmarks_info):
     """Concise 4-part dashboard snapshot (§10). Returns (ok, dict|message).
     Generated automatically after each assessment and cached — never
     regenerated for mere page refreshes (§11)."""
+    import app_knowledge as appk
     prov = active_provider()
     payload = {"user_results": results, "household": general,
-               "benchmarks": benchmarks_info}
+               "benchmarks": benchmarks_info,
+               "data_completeness": data_completeness(results)}
     user_msg = "USER RESULTS:\n" + json.dumps(payload, indent=1)
+    system = (_EVAL_SYSTEM + appk.analysis_context(_account_type_of(general))
+              + _SCORING_NOTE + _completeness_note(results))
     try:
         if prov == "anthropic":
             client = _get_anthropic_client()
@@ -698,7 +820,7 @@ def short_eval(results, general, benchmarks_info):
                 return False, _anthropic_error or "AI unavailable."
             response = client.messages.create(
                 model=ANTHROPIC_MODEL, max_tokens=6000,
-                thinking={"type": "adaptive"}, system=_EVAL_SYSTEM,
+                thinking={"type": "adaptive"}, system=system,
                 output_config={"format": {"type": "json_schema",
                                           "schema": _EVAL_SCHEMA}},
                 messages=[{"role": "user", "content": user_msg}])
@@ -712,7 +834,7 @@ def short_eval(results, general, benchmarks_info):
                 return False, _gemini_error or "AI unavailable."
             resp = client.models.generate_content(
                 model=GEMINI_MODEL, contents=user_msg,
-                config=_gemini_config(system=_EVAL_SYSTEM, json_mode=True))
+                config=_gemini_config(system=system, json_mode=True))
             parsed = _parse_json_lenient(resp.text)
         else:
             return False, ai_status()[1]
@@ -728,21 +850,33 @@ def short_eval(results, general, benchmarks_info):
 
 def fallback_eval(results):
     """Deterministic snapshot when the assistant is offline — same shape as
-    short_eval so the dashboard renders identically."""
+    short_eval so the dashboard renders identically. Acknowledges incomplete
+    data honestly (brief §6), since this is exactly what the user sees when the
+    AI is unavailable."""
     w, e, c = results["water"], results["electricity"], results["carbon"]
     breakdown = c["breakdown"]
     biggest = max(breakdown, key=breakdown.get)
     per_day = w["water_litres_person_day"]
+    dc = data_completeness(results)
+    estimated = dc["estimated_categories"]
     positive = ("Water use is below the SA 218 L/person/day benchmark."
                 if per_day <= 218 else
                 f"Your data quality: {e['confidence']}-confidence electricity "
                 "numbers make this footprint trustworthy.")
-    concern = (f"{biggest.replace('_', ' ').title()} is your largest carbon "
-               f"source ({breakdown[biggest]:,.0f} kg/year).")
+    if estimated:
+        concern = (f"Your {', '.join(estimated)} figure"
+                   f"{'s are' if len(estimated) > 1 else ' is'} estimated — "
+                   "adding a bill or meter reading would make this more "
+                   "complete.")
+    else:
+        concern = (f"{biggest.replace('_', ' ').title()} is your largest carbon "
+                   f"source ({breakdown[biggest]:,.0f} kg/year).")
     return {
-        "overall": f"Net footprint {c['net_co2e_kg_year']:,.0f} kg CO₂e/year, "
-                   f"water {per_day:,.0f} L/person/day, electricity "
-                   f"{e['total_electricity_kwh_month']:,.0f} kWh/month.",
+        "overall": "Based on the information you provided, your current "
+                   f"estimate is about {c['net_co2e_kg_year']:,.0f} kg "
+                   f"CO₂e/year net, {per_day:,.0f} L/person/day of water and "
+                   f"{e['total_electricity_kwh_month']:,.0f} kWh/month of "
+                   "electricity.",
         "positive": positive,
         "concern": concern,
         "recommendation": "Work through this week's plan below — it targets "
@@ -754,8 +888,10 @@ def fallback_analysis(results):
     """Deterministic, non-AI summary used when the API is unavailable."""
     c = results["carbon"]
     biggest = max(c["breakdown"], key=c["breakdown"].get)
-    return "\n".join([
+    dc = data_completeness(results)
+    lines = [
         "**Where you stand (offline summary)**",
+        "Based on the information you provided, here is your current estimate:",
         f"- Water: {results['water']['water_litres_person_day']:.0f} L/person/day "
         f"(SA benchmark 218) — confidence {results['water']['confidence']}.",
         f"- Electricity: {results['electricity']['total_electricity_kwh_month']:.0f} "
@@ -763,16 +899,33 @@ def fallback_analysis(results):
         f"- Carbon: {c['net_co2e_kg_year']:.0f} kg CO2e/year (net).",
         f"- Largest carbon contributor: **{biggest.replace('_', ' ')}** "
         f"({c['breakdown'][biggest]:.0f} kg/year).",
+    ]
+    if dc["estimated_categories"]:
+        lines.append(
+            f"- Note: your {', '.join(dc['estimated_categories'])} figure(s) "
+            "are estimated rather than measured — adding a bill or meter "
+            "reading would make this estimate more complete.")
+    lines += [
         "",
         "_AI interpretation is offline — connect a key under Settings to enable "
         "it. Your weekly goals below are generated deterministically and still "
         "apply._",
-    ])
+    ]
+    return "\n".join(lines)
 
 
 # ===========================================================================
 # 3. AI planning assistant
 # ===========================================================================
+
+def _planner_system(grounding):
+    """Planner system prompt + app-knowledge so the assistant can answer
+    navigation / feature questions (spec §3), account-type aware."""
+    import app_knowledge as appk
+    acct = (grounding or {}).get("account_type", "personal")
+    return (_PLANNER_SYSTEM + appk.assistant_knowledge(acct) + _SCORING_NOTE
+            + "\n\nUSER CONTEXT (JSON):\n" + json.dumps(grounding, indent=1))
+
 
 def planner_reply(history, grounding):
     """One planner turn. Returns dict: ok, text, proposed_goals, history."""
@@ -790,7 +943,7 @@ def _anthropic_planner(history, grounding):
     if client is None:
         return {"ok": False, "text": _anthropic_error or "AI unavailable.",
                 "proposed_goals": [], "history": history}
-    system = _PLANNER_SYSTEM + "\n\nUSER CONTEXT (JSON):\n" + json.dumps(grounding, indent=1)
+    system = _planner_system(grounding)
     messages = [{"role": h["role"], "content": h["text"]} for h in history]
     proposed = []
     try:
@@ -831,8 +984,7 @@ def _gemini_planner(history, grounding):
     if client is None:
         return {"ok": False, "text": _gemini_error or "AI unavailable.",
                 "proposed_goals": [], "history": history}
-    system = (_PLANNER_SYSTEM + "\n\nUSER CONTEXT (JSON):\n"
-              + json.dumps(grounding, indent=1) + _PLANNER_JSON_INSTRUCTIONS)
+    system = _planner_system(grounding) + _PLANNER_JSON_INSTRUCTIONS
     try:
         resp = client.models.generate_content(
             model=GEMINI_MODEL, contents=_gemini_history(history),
@@ -850,6 +1002,119 @@ def _gemini_planner(history, grounding):
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "text": _friendly_error(exc),
                 "proposed_goals": [], "history": history}
+
+
+# ===========================================================================
+# 3b. AI relevance pass for goal ranking (§2.3 / §2.6)
+# ===========================================================================
+
+_RANK_SYSTEM = """You help an environmental app decide how RELEVANT each
+suggested goal is to ONE specific household, using their assessment results.
+
+You are given the user's results/household context and a list of candidate
+goals (each with a title and the behaviour it targets). For EACH goal return:
+- "title": copied back EXACTLY as given (so it can be matched),
+- "relevance": an integer 1–5 for how directly this goal addresses a
+  meaningful part of THIS user's impact (5 = squarely one of their biggest,
+  most applicable levers; 1 = barely applies to them),
+- "reason": ONE short, warm, non-technical sentence a normal person would
+  understand, e.g. "Recommended because transport is one of your largest
+  sources of emissions and this looks realistic for you." No numbers, scores,
+  jargon or mention of AI.
+
+Rules: a goal about a behaviour the user does not do (e.g. flights for someone
+who never flies) must get relevance 1. Do not invent goals. Return ONLY a JSON
+object: {"goals": [ {…}, {…} ]} with one entry per input goal."""
+
+_RANK_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "goals": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string"},
+                    "relevance": {"type": "integer"},
+                    "reason": {"type": "string"},
+                },
+                "required": ["title", "relevance", "reason"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["goals"],
+    "additionalProperties": False,
+}
+
+
+def _validate_rank(parsed):
+    """Turn raw AI output into {title: {relevance, reason}}, dropping anything
+    malformed. Never raises — a bad response yields {} so callers fall back to
+    the deterministic ranking (§2.6)."""
+    overlay = {}
+    if not isinstance(parsed, dict):
+        return overlay
+    for item in (parsed.get("goals") or []):
+        if not isinstance(item, dict):
+            continue
+        title = item.get("title")
+        rel = item.get("relevance")
+        if not isinstance(title, str) or not title.strip():
+            continue
+        try:
+            rel = int(rel)
+        except (TypeError, ValueError):
+            continue
+        rel = max(1, min(5, rel))
+        reason = item.get("reason")
+        overlay[re.sub(r"\s+", " ", title.strip().lower())] = {
+            "relevance": rel,
+            "reason": reason.strip() if isinstance(reason, str) else None,
+        }
+    return overlay
+
+
+def rank_goals(candidates, grounding):
+    """Ask the AI to judge relevance + write a friendly reason per candidate.
+    Returns a validated {normalised_title: {relevance, reason}} overlay, or {}
+    when AI is unavailable or the response can't be trusted. Pure enhancement —
+    the deterministic ranker works without it."""
+    prov = active_provider()
+    if prov is None or not candidates:
+        return {}
+    slim = [{"title": c.get("title"), "targets": c.get("addresses"),
+             "metric": c.get("metric")} for c in candidates]
+    payload = ("USER CONTEXT (JSON):\n" + json.dumps(grounding, indent=1)
+               + "\n\nCANDIDATE GOALS (JSON):\n" + json.dumps(slim, indent=1))
+    try:
+        if prov == "anthropic":
+            client = _get_anthropic_client()
+            if client is None:
+                return {}
+            response = client.messages.create(
+                model=ANTHROPIC_MODEL, max_tokens=4000,
+                thinking={"type": "adaptive"}, system=_RANK_SYSTEM,
+                output_config={"format": {"type": "json_schema",
+                                          "schema": _RANK_SCHEMA}},
+                messages=[{"role": "user", "content": payload}])
+            if response.stop_reason == "refusal":
+                return {}
+            parsed = json.loads(next(b.text for b in response.content
+                                     if b.type == "text"))
+        elif prov == "gemini":
+            client = _get_gemini_client()
+            if client is None:
+                return {}
+            resp = client.models.generate_content(
+                model=GEMINI_MODEL, contents=payload,
+                config=_gemini_config(system=_RANK_SYSTEM, json_mode=True))
+            parsed = _parse_json_lenient(resp.text)
+        else:
+            return {}
+        return _validate_rank(parsed)
+    except Exception:  # noqa: BLE001 — ranking must never break Goals
+        return {}
 
 
 # ===========================================================================
@@ -953,6 +1218,45 @@ def _anthropic_extract(file_bytes, ext, media_type, kind, prompt):
         return False, "The document could not be processed."
     text = next(b.text for b in response.content if b.type == "text")
     return True, json.loads(text)
+
+
+def avatar_generation_ready():
+    """True when an image-capable Gemini key is configured. Anthropic can't
+    generate images, so this feature specifically needs Gemini."""
+    return _gemini_available()
+
+
+def generate_avatar(image_bytes, mime_type="image/png"):
+    """Turn an uploaded photo into a stylised illustrated avatar (spec §12),
+    using the canonical prompt. Returns (ok, png_bytes | friendly_message).
+
+    On ANY failure the caller keeps the existing avatar — this never returns a
+    broken image (spec §20)."""
+    if genai is None:
+        return False, ("Avatar generation needs the google-genai package "
+                       "installed.")
+    client = _get_gemini_client()
+    if client is None:
+        return False, ("Connect a free Google Gemini key under Settings to "
+                       "generate an avatar from a photo.")
+    try:
+        resp = client.models.generate_content(
+            model=AVATAR_MODEL,
+            contents=[genai_types.Part.from_bytes(data=image_bytes,
+                                                  mime_type=mime_type),
+                      _AVATAR_PROMPT],
+            config=genai_types.GenerateContentConfig(
+                response_modalities=["IMAGE"]))
+        for cand in (resp.candidates or []):
+            content = getattr(cand, "content", None)
+            for part in (getattr(content, "parts", None) or []):
+                inline = getattr(part, "inline_data", None)
+                if inline and getattr(inline, "data", None):
+                    return True, inline.data
+        return False, ("The avatar service didn't return an image this time — "
+                       "your current avatar is unchanged. Try another photo.")
+    except Exception as exc:  # noqa: BLE001 — never crash the profile page
+        return False, _friendly_error(exc)
 
 
 def _gemini_extract(file_bytes, media_type, kind, prompt):

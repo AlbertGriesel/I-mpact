@@ -23,15 +23,16 @@ def _airport_select(label, current_code, key):
     return code_from_option(choice) if choice != "—" else ""
 
 
-def render(data):
-    st.header("Transport")
-
-    # ------------------------------------------------------------- flights
+def flights_editor(data, *, caption=None):
+    """Reusable flights editor — used by the personal Transport step and the
+    business Fleet & travel step. Mutates and returns `data["flights"]` on the
+    passed section dict; only complete routes (both airports) are saved."""
     st.subheader("Flights")
-    st.caption("Add each recurring route once — type in the boxes to search "
-               "airports by city or code; distance is computed from "
-               "coordinates. Cabin class matters: a first-class seat carries "
-               "up to 4× the emissions of economy on the same route.")
+    st.caption(caption or (
+        "Add each recurring route once — type in the boxes to search "
+        "airports by city or code; distance is computed from "
+        "coordinates. Cabin class matters: a first-class seat carries "
+        "up to 4× the emissions of economy on the same route."))
     # working store: rows persist while being edited, but ONLY complete
     # routes (both airports set) are saved into the assessment (§4)
     store = st.session_state.setdefault(
@@ -85,6 +86,12 @@ def render(data):
     if incomplete:
         st.warning(f"{incomplete} route(s) still missing an airport — they "
                    "won't be counted until completed.")
+    return data
+
+
+def render(data):
+    st.header("Transport")
+    data = flights_editor(data)
 
     # ------------------------------------------------------------- vehicle
     st.subheader("Personal vehicle")

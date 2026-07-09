@@ -80,6 +80,27 @@ def calculate_water(data):
                          "and stated rainwater share ([approximation]).")
         else:
             total_l = municipal_l
+    elif g.get("account_type") == "business":
+        # business fallback: sector water intensity × floor area (spec §5),
+        # NOT the per-person household benchmark.
+        from benchmarks import business_sector_benchmark
+        bench = business_sector_benchmark(g.get("sector"))
+        area = g.get("floor_area_m2")
+        if area:
+            total_l = bench["water_l_m2"] * float(area) / 12.0
+            notes.append("No metered water — estimated from the sector's water "
+                         "intensity × floor area ([sector benchmark, rough]).")
+        elif g.get("employees"):
+            total_l = 50.0 * float(g["employees"]) * 365.0 / 12.0
+            notes.append("No metered water or floor area — estimated at roughly "
+                         "50 L/employee/day ([assumption]).")
+        else:
+            total_l = 0.0
+            notes.append("No water information provided for the business.")
+        method = "business_sector_estimate"
+        confidence = "LOW"
+        rainwater_l = total_l * rain_fraction
+        municipal_l = total_l - rainwater_l
     else:
         # 5. national fallback: 218 L/person/day is a TOTAL-use benchmark.
         total_l = F("water_national_l_person_day") * hh * 365.0 / 12.0
@@ -89,6 +110,19 @@ def calculate_water(data):
                      "218 L/person/day used (SA government figure).")
         rainwater_l = total_l * rain_fraction
         municipal_l = total_l - rainwater_l
+
+    # business: add process / irrigation water to the premises total
+    if g.get("account_type") == "business":
+        b = data.get("business", {})
+        add_l = 0.0
+        if b.get("process_water_kl_month"):
+            add_l += float(b["process_water_kl_month"]) * 1000.0
+        if b.get("irrigation_kl_month"):
+            add_l += float(b["irrigation_kl_month"]) * 1000.0
+        if add_l:
+            total_l += add_l
+            municipal_l += add_l
+            notes.append("Included process / irrigation water in the total.")
 
     # Shower estimate: separate category information, never added to the total.
     shower_l_month_pp = None
@@ -188,7 +222,26 @@ def calculate_electricity(data):
         else:
             notes.append("Electricity spend given but the utility tariff is not "
                          "supported; used the appliance estimate instead.")
-    # 4. appliance estimate
+    # 4. estimate (no measured data): business uses a sector intensity, a
+    # household uses the broad appliance model.
+    if kwh is None and g.get("account_type") == "business":
+        from benchmarks import business_sector_benchmark
+        bench = business_sector_benchmark(g.get("sector"))
+        area = g.get("floor_area_m2")
+        if area:
+            kwh = bench["kwh_m2"] * float(area) / 12.0
+            notes.append("No metered electricity — estimated from the sector's "
+                         "energy intensity × floor area ([sector benchmark, rough]).")
+        elif g.get("employees"):
+            kwh = 200.0 * float(g["employees"])
+            notes.append("No metered electricity or floor area — estimated at "
+                         "roughly 200 kWh/employee/month ([assumption]).")
+        else:
+            kwh = 0.0
+            notes.append("No electricity information provided for the business.")
+        method = "business_sector_estimate"
+        confidence = "LOW"
+        is_grid_import = False
     if kwh is None:
         appliance_breakdown = _appliance_estimate_kwh_month(e, l)
         kwh = sum(appliance_breakdown.values())
@@ -435,9 +488,91 @@ def calculate_diet(data):
             "detail": {"diet": diet, "waste_fraction": waste_fraction}}
 
 
+def calculate_fleet(data):
+    """Business fleet emissions (spec §5 Transport & Fleet). Reuses the SAME
+    fuel factors as the personal vehicle path — a litre of diesel is a litre of
+    diesel — so there is no second engine, just a per-vehicle-type loop."""
+    fleet = data.get("transport", {}).get("fleet", []) or []
+    total, detail, notes = 0.0, [], []
+    for fv in fleet:
+        km = fv.get("annual_km_each")
+        if not km:
+            continue
+        km = float(km)
+        count = max(1, int(fv.get("count") or 1))
+        fuel = (fv.get("fuel") or "diesel").lower()
+        if fuel == "electric" and fv.get("kwh_per_km"):
+            per = km * float(fv["kwh_per_km"]) * F("sa_grid_kgco2e_per_kwh")
+            basis = "electric (grid)"
+        elif fuel in ("petrol", "diesel") and fv.get("l_per_100km"):
+            factor = F("petrol_kgco2e_per_l") if fuel == "petrol" else F("diesel_kgco2e_per_l")
+            per = km * float(fv["l_per_100km"]) / 100.0 * factor
+            basis = f"{fuel} at {fv['l_per_100km']:g} L/100km"
+        else:
+            per = km * F("fleet_default_kgco2e_per_km")
+            basis = "default factor (consumption unknown)"
+            notes.append(f"{fv.get('vehicle_type', 'Fleet vehicle')} used a "
+                         "default emission factor — add fuel type and L/100km "
+                         "for an accurate figure.")
+        veh_total = per * count
+        total += veh_total
+        detail.append({"vehicle_type": fv.get("vehicle_type"), "count": count,
+                       "annual_km_each": round(km), "fuel": fuel, "basis": basis,
+                       "co2e_kg_year": round(veh_total, 1)})
+    return {"co2e_kg_year": round(total, 1),
+            "confidence": "MEDIUM" if detail else None,
+            "notes": notes, "detail": detail}
+
+
+def calculate_waste(data):
+    """Business waste emissions (spec §5 Waste & Operations). Deterministic:
+    general waste to landfill, less the recycled share, plus food waste where
+    the sector reports it."""
+    b = data.get("business", {})
+    notes, detail = [], {}
+    waste = b.get("waste_kg_month")
+    food = b.get("food_waste_kg_month")
+    if not waste and not food:
+        return {"co2e_kg_year": 0.0, "confidence": None, "notes": notes,
+                "detail": None}
+    rec = 0.0
+    if b.get("recycles"):
+        rec = min(1.0, max(0.0, float(b.get("recycling_percent") or 0) / 100.0))
+    total = 0.0
+    if waste:
+        w_year = float(waste) * 12.0
+        landfill_kg = w_year * (1.0 - rec)
+        recycled_kg = w_year * rec
+        total += landfill_kg * F("waste_mixed_landfill_kgco2e_per_kg")
+        total += recycled_kg * F("waste_recycling_kgco2e_per_kg")
+        detail["general_waste_kg_year"] = round(w_year)
+        detail["recycling_percent"] = round(rec * 100)
+    if food:
+        f_year = float(food) * 12.0
+        total += f_year * F("waste_mixed_landfill_kgco2e_per_kg")
+        detail["food_waste_kg_year"] = round(f_year)
+        notes.append("Food waste uses the mixed-landfill factor as a proxy "
+                     "([simplified] — real food-waste emissions vary).")
+    return {"co2e_kg_year": round(total, 1), "confidence": "MEDIUM",
+            "notes": notes, "detail": detail}
+
+
 def calculate_carbon(data, electricity_result):
     g, l = data["general"], data["lifestyle"]
     hh = max(1, int(g.get("household_size") or 1))
+    is_business = g.get("account_type") == "business"
+
+    flights = calculate_flights(data)
+    heating = calculate_heating(data, electricity_result["calculation_method"]
+                                in ("measured_bill", "measured_manual",
+                                    "bill_amount_tariff"))
+
+    if is_business:
+        return _carbon_business(data, electricity_result, flights, heating)
+
+    vehicle = calculate_vehicle(data)
+    public = calculate_public_transport(data)
+    diet = calculate_diet(data)
 
     vehicle = calculate_vehicle(data)
     flights = calculate_flights(data)
@@ -478,9 +613,14 @@ def calculate_carbon(data, electricity_result):
     notes = (vehicle["notes"] + flights["notes"] + public["notes"] +
              heating["notes"] + diet["notes"])
 
+    hh = max(1, int(g.get("household_size") or 1))
     return {
         "gross_co2e_kg_year": round(gross, 1),
         "net_co2e_kg_year": round(net, 1),
+        # signed net (can go negative when offsets exceed gross) — drives the
+        # net-zero / net-positive score semantics (spec §18)
+        "net_signed_co2e_kg_year": round(gross - offsets_kg, 1),
+        "per_person_net_co2e_kg_year": round(per_person - offsets_kg / hh, 1),
         "carbon_offsets_kg_year": round(offsets_kg, 1),
         "per_person_co2e_kg_year": round(per_person, 1),
         "breakdown": {k: round(v, 1) for k, v in breakdown.items()},
@@ -505,6 +645,69 @@ def calculate_carbon(data, electricity_result):
     }
 
 
+def _carbon_business(data, electricity_result, flights, heating):
+    """Business carbon: same electricity/generator/flights/heating pieces, but
+    diet is dropped and fleet + waste are added. Per-employee is the headline
+    normalisation (spec §5)."""
+    g, l = data["general"], data["lifestyle"]
+    fleet = calculate_fleet(data)
+    waste = calculate_waste(data)
+
+    breakdown = {
+        "electricity": electricity_result["electricity_co2e_kg_year"],
+        "generator": electricity_result["generator_co2e_kg_year"],
+        "fleet": fleet["co2e_kg_year"],
+        "flights": flights["co2e_kg_year"],
+        "heating": heating["co2e_kg_year"],
+        "waste": waste["co2e_kg_year"],
+    }
+    gross = sum(breakdown.values())
+
+    offsets_kg = 0.0
+    if l.get("buys_offsets") and l.get("offset_tonnes_per_year"):
+        offsets_kg = float(l["offset_tonnes_per_year"]) * 1000.0
+    net = max(gross - offsets_kg, 0.0)
+
+    employees = g.get("employees")
+    per_employee = round(gross / employees, 1) if employees else None
+    per_employee_net = round((gross - offsets_kg) / employees, 1) if employees else None
+
+    confidences = [electricity_result["confidence"], fleet["confidence"],
+                   flights["confidence"], heating["confidence"], waste["confidence"]]
+    overall_conf = _lowest_confidence(confidences)
+    notes = fleet["notes"] + flights["notes"] + heating["notes"] + waste["notes"]
+
+    return {
+        "gross_co2e_kg_year": round(gross, 1),
+        "net_co2e_kg_year": round(net, 1),
+        "carbon_offsets_kg_year": round(offsets_kg, 1),
+        # kept for downstream compatibility; for a business it equals the whole
+        # business gross (household_size defaults to 1). per_employee is the
+        # meaningful business figure.
+        "per_person_co2e_kg_year": round(gross, 1),
+        "net_signed_co2e_kg_year": round(gross - offsets_kg, 1),
+        "per_employee_co2e_kg_year": per_employee,
+        "per_employee_net_co2e_kg_year": per_employee_net,
+        "breakdown": {k: round(v, 1) for k, v in breakdown.items()},
+        "context": {
+            "sector": g.get("sector"),
+            "employees": employees,
+            "floor_area_m2": g.get("floor_area_m2"),
+            "premises_count": g.get("premises_count"),
+            "operating_days_per_week": g.get("operating_days_per_week"),
+            "operating_hours_per_day": g.get("operating_hours_per_day"),
+            "renewable_share": electricity_result["renewable_share_percent"],
+            "backup_power_type": electricity_result["backup_power_type"],
+            "province": g.get("region"),
+            "municipality": g.get("municipality"),
+        },
+        "calculation_confidence": overall_conf,
+        "detail": {"fleet": fleet["detail"], "flights": flights["detail"],
+                   "heating": heating["detail"], "waste": waste["detail"]},
+        "notes": notes,
+    }
+
+
 # ===========================================================================
 # Entry point
 # ===========================================================================
@@ -514,14 +717,32 @@ def run_assessment(data):
 
     Returns {"water": ..., "electricity": ..., "carbon": ..., "score": ...}
     following the output schemas in calc doc §15-17, plus the impact score.
-    """
+    The ONE engine serves personal and business; business adds per-employee /
+    per-m² normalisation and a sector-based score (spec §4-5)."""
     water = calculate_water(data)
     electricity = calculate_electricity(data)
     carbon = calculate_carbon(data, electricity)
 
+    g = data["general"]
     from benchmarks import impact_score
-    score = impact_score(water, electricity, carbon,
-                         max(1, int(data["general"].get("household_size") or 1)))
+    if g.get("account_type") == "business":
+        employees = g.get("employees")
+        area = g.get("floor_area_m2")
+        annual_kwh = electricity["total_electricity_kwh_month"] * 12.0
+        annual_water_l = water["total_water_litres_month"] * 12.0
+        electricity["kwh_per_m2_year"] = round(annual_kwh / area, 1) if area else None
+        electricity["kwh_per_employee_year"] = (
+            round(annual_kwh / employees, 1) if employees else None)
+        water["litres_per_m2_year"] = round(annual_water_l / area, 1) if area else None
+        water["kl_per_employee_year"] = (
+            round(annual_water_l / 1000.0 / employees, 2) if employees else None)
+        score = impact_score(water, electricity, carbon,
+                             max(1, int(g.get("household_size") or 1)),
+                             account_type="business", sector=g.get("sector"),
+                             employees=employees, floor_area_m2=area)
+    else:
+        score = impact_score(water, electricity, carbon,
+                             max(1, int(g.get("household_size") or 1)))
 
     return {"water": water, "electricity": electricity, "carbon": carbon,
             "score": score}
