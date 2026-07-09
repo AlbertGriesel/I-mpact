@@ -671,6 +671,26 @@ def inject_theme(score=None, theme="light"):
         box-shadow: 0 0 0 3px rgba(46,158,99,0.18) !important;
         border-color: {GREEN} !important;
     }}
+    /* AI-Assessment prompt box: give the block AROUND the typing field a
+       darker, clearly-defined green frame so it stands out from the page
+       (the default was a near-white wrapper that blended in), with a clean
+       light field inside. */
+    [data-testid="stChatInput"] > div {{
+        background: #cddcd2 !important;
+        border: 2px solid {GREEN} !important;
+        border-radius: 16px !important;
+        padding: 4px !important;
+        box-shadow: 0 6px 18px rgba(20,60,42,0.12);
+    }}
+    [data-testid="stChatInput"] textarea {{
+        background: #ffffff !important;
+        border-radius: 11px !important;
+        color: #16342A !important;
+    }}
+    [data-testid="stChatInput"]:focus-within > div {{
+        border-color: {DEEP} !important;
+        box-shadow: 0 0 0 3px rgba(46,158,99,0.22) !important;
+    }}
     div[data-testid="stFileUploader"] section {{ border-radius: 14px; }}
     /* §4 — no fullscreen viewer on images (e.g. avatar/selfie previews) */
     button[title="View fullscreen"], button[aria-label="Fullscreen"],
