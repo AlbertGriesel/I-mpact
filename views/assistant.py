@@ -67,9 +67,10 @@ def render_floating(user):
     """FAB + panel. Rendered on every page from app.py; survives reruns
     because visibility is plain session state."""
     with st.container(key="assistant_fab"):
-        if st.button("Assistant", key="fab_btn",
-                     help="Ask I/mpact — questions about your results and how "
-                          "to improve"):
+        # NO help= tooltip here: Streamlit mounts a floating tooltip on hover,
+        # and at the fixed bottom-right corner it appears under the cursor,
+        # steals the hover, unmounts, and loops — i.e. the launcher "flicker".
+        if st.button("Assistant", key="fab_btn"):
             st.session_state["assistant_open"] = \
                 not st.session_state.get("assistant_open", False)
 

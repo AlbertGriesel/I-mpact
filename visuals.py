@@ -550,18 +550,29 @@ def inject_theme(score=None, theme="light"):
     h1, h2, h3 {{ color: {DEEP}; }}
     /* hide the "Press Enter to apply" hint — values apply on their own */
     div[data-testid="InputInstructions"] {{ display: none; }}
+    /* tooltips are informational — make them click-through so a tooltip that
+       pops up under the cursor can never steal the hover from its trigger
+       (the enter/leave loop users see as "flicker") */
+    div[data-testid="stTooltipContent"], div[data-baseweb="tooltip"],
+    div[data-baseweb="popover"][role="tooltip"], div[role="tooltip"] {{
+        pointer-events: none !important;
+    }}
     .stButton > button, .stFormSubmitButton > button {{
         border-radius: 999px !important; border: 1.5px solid {GREEN}44;
         font-weight: 700;
         transition: transform .16s cubic-bezier(.34,1.4,.64,1),
                     box-shadow .16s ease, filter .16s ease;
     }}
+    /* HOVER STABILITY RULE (applies app-wide): hover must never MOVE the
+       element it is bound to — a cursor resting near an edge would fall out
+       of the moved hitbox and re-enter it in a loop (visible flicker).
+       Buttons respond with shadow + brightness only. */
     .stButton > button:hover, .stFormSubmitButton > button:hover {{
-        transform: translateY(-2px);
-        box-shadow: 0 9px 22px rgba(46,158,99,0.24);
+        box-shadow: 0 9px 22px rgba(46,158,99,0.30);
+        filter: brightness(1.03);
     }}
     .stButton > button:active, .stFormSubmitButton > button:active {{
-        transform: translateY(0);
+        filter: brightness(0.97);
     }}
     .stButton > button[kind="primary"], .stFormSubmitButton > button[kind="primary"] {{
         background: linear-gradient(135deg, #35b26f, #59cd8c); border: none;
@@ -586,10 +597,10 @@ def inject_theme(score=None, theme="light"):
         box-shadow: 0 8px 26px rgba(20,60,42,0.10);
         transition: transform .18s ease, box-shadow .18s ease;
     }}
-    /* §10 read-only tier: containers respond subtly to presence */
+    /* §10 read-only tier: containers respond subtly to presence — shadow
+       only, never movement (see HOVER STABILITY RULE) */
     div[data-testid="stVerticalBlockBorderWrapper"]:hover,
     div[data-testid="stLayoutWrapper"]:has(> [data-testid="stVerticalBlock"]):hover {{
-        transform: translateY(-2px);
         box-shadow: 0 14px 32px rgba(20,60,42,0.16);
     }}
     section[data-testid="stSidebar"] {{
@@ -623,7 +634,6 @@ def inject_theme(score=None, theme="light"):
     }}
     [data-testid="stSidebarNav"] a:hover {{
         background: {"rgba(143,224,173,0.12)" if night else "rgba(46,158,99,0.12)"};
-        transform: translateX(2px);
     }}
     [data-testid="stSidebarNav"] a[aria-current="page"],
     [data-testid="stSidebarNav"] a[aria-current="true"] {{
@@ -707,8 +717,7 @@ def inject_theme(score=None, theme="light"):
         transition: transform .18s ease, box-shadow .18s ease;
     }}
     .impact-kpi:hover {{
-        transform: translateY(-3px);
-        box-shadow: 0 14px 30px rgba(27,94,59,0.13);
+        box-shadow: 0 14px 30px rgba(27,94,59,0.16);
     }}
     .impact-kpi .t {{ font-size: .85rem; color: #5c7069; font-weight: 600;
                       letter-spacing: .02em; }}
@@ -739,10 +748,9 @@ def inject_theme(score=None, theme="light"):
         display:inline-block; padding:.25rem .8rem; border-radius:999px;
         background:{SOFT}; border:1px solid #e3edea; font-size:.88rem;
         margin: 0 .3rem .3rem 0; color:{DEEP}; font-weight:600;
-        transition: transform .15s ease, box-shadow .15s ease;
+        transition: box-shadow .15s ease;
     }}
-    .pill:hover {{ transform: translateY(-1px);
-                   box-shadow: 0 4px 10px rgba(27,94,59,.12); }}
+    .pill:hover {{ box-shadow: 0 4px 10px rgba(27,94,59,.14); }}
     .story-card {{ border-left: 4px solid {GREEN}; padding-left: .9rem; }}
     .inline-label {{ padding-top: .45rem; font-weight: 600; color: #22423A; }}
     .wordmark {{ font-size: 1.5rem; font-weight: 800; color: {DEEP};
@@ -785,11 +793,10 @@ def inject_theme(score=None, theme="light"):
         font-weight: 700; color: {DEEP};
     }}
     .impact-userchip {{ cursor: pointer; transition: box-shadow .15s ease,
-                        transform .15s ease, background .15s ease; }}
+                        background .15s ease; }}
     .impact-userchip:hover {{
-        box-shadow: 0 6px 20px rgba(27,94,59,0.20);
+        box-shadow: 0 6px 20px rgba(27,94,59,0.22);
         background: rgba(255,255,255,0.98);
-        transform: translateY(-1px);
     }}
     .impact-userchip:focus-visible {{ outline: 2px solid {GREEN}; outline-offset: 2px; }}
     .impact-userchip .mascot {{ display: flex; align-items: center; }}
@@ -1025,14 +1032,18 @@ def _v2_css(p, night):
     .stApp .stFormSubmitButton > button[kind="primary"] {
         box-shadow: 0 5px 0 0 #1f8b52, 0 12px 22px rgba(31,139,82,.28) !important;
     }
+    /* hover never moves the button (see HOVER STABILITY RULE) — the raised
+       base "presses" via shadow depth alone */
     .stApp .stButton > button[kind="primary"]:hover,
     .stApp .stFormSubmitButton > button[kind="primary"]:hover {
-        transform: translateY(-2px) !important;
-        box-shadow: 0 7px 0 0 #1f8b52, 0 16px 28px rgba(31,139,82,.34) !important;
+        transform: none !important;
+        filter: brightness(1.05);
+        box-shadow: 0 5px 0 0 #1f8b52, 0 16px 28px rgba(31,139,82,.40) !important;
     }
     .stApp .stButton > button[kind="primary"]:active,
     .stApp .stFormSubmitButton > button[kind="primary"]:active {
-        transform: translateY(3px) !important;
+        transform: none !important;
+        filter: brightness(0.96);
         box-shadow: 0 2px 0 0 #1f8b52, 0 6px 12px rgba(31,139,82,.24) !important;
     }
 
@@ -1071,12 +1082,12 @@ def _v2_css(p, night):
         border:1px solid rgba(27,94,59,.07);
         box-shadow:0 10px 28px rgba(27,94,59,.10); height:100%;
         transition: transform .18s ease, box-shadow .18s ease; }
-    /* §10 read-only tier: a quiet lift + glow, information emphasis only */
-    .stat-tile:hover { transform: translateY(-3px);
-        box-shadow: 0 16px 34px rgba(27,94,59,.16); }
+    /* §10 read-only tier: a quiet glow, information emphasis only (no
+       movement — see HOVER STABILITY RULE) */
+    .stat-tile:hover { box-shadow: 0 16px 34px rgba(27,94,59,.18); }
     @media (prefers-reduced-motion: reduce) {
       .stat-tile, .stat-tile:hover, .pill, .pill:hover {
-        transform: none !important; transition: none !important; }
+        transition: none !important; }
     }
     .stat-tile .st-ico { position:absolute; right:.7rem; top:.6rem; opacity:.9; }
     .stat-tile .st-lab { font-weight:800; font-size:.82rem; letter-spacing:.02em;
