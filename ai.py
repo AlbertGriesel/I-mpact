@@ -41,7 +41,12 @@ except ImportError:
     genai_types = None
 
 ANTHROPIC_MODEL = "claude-opus-4-8"
-GEMINI_MODEL = "gemini-2.5-flash"   # free-tier, vision + JSON capable
+# Use the auto-tracking "latest" alias, NOT a pinned version: Google retires
+# dated Gemini models (e.g. gemini-2.5-flash 404'd once deprecated), which
+# silently broke every text AI call. The alias always resolves to the current
+# free-tier flash model — vision + JSON capable — so a version rotation can't
+# break the app again.
+GEMINI_MODEL = "gemini-flash-lite-latest"
 AVATAR_MODEL = "gemini-2.5-flash-image"   # image generation ("nano banana")
 
 # Canonical avatar-generation spec (spec §12). Sent verbatim to the image model.
