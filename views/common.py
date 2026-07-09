@@ -77,17 +77,20 @@ def measure_intro(active):
          "Chat naturally with our AI assistant. It asks the same questions in "
          "conversation and fills in your assessment as you talk."),
     ]
-    c1, c2 = st.columns(2)
-    for col, (kind, page_key, ic, title, desc) in zip((c1, c2), cards):
-        with col, st.container(border=True):
-            here = " <span class='pill' style='font-size:.68rem'>you're here</span>" \
-                if kind == active else ""
-            st.markdown(f"{icon(ic, 20, '#2E9E63')} **{title}**{here}",
-                        unsafe_allow_html=True)
-            st.caption(desc)
-            if kind != active and page_key in pages:
-                st.page_link(pages[page_key], label=f"Switch to “{title}”",
-                             icon=":material/swap_horiz:")
+    # keyed wrapper so the two cards share equal height and their action links
+    # bottom-align, whichever description wraps longer (brief §5)
+    with st.container(key="measure_cards"):
+        c1, c2 = st.columns(2)
+        for col, (kind, page_key, ic, title, desc) in zip((c1, c2), cards):
+            with col, st.container(border=True):
+                here = (" <span class='pill' style='font-size:.68rem'>"
+                        "you're here</span>") if kind == active else ""
+                st.markdown(f"{icon(ic, 20, '#2E9E63')} **{title}**{here}",
+                            unsafe_allow_html=True)
+                st.caption(desc)
+                if kind != active and page_key in pages:
+                    st.page_link(pages[page_key], label=f"Switch to “{title}”",
+                                 icon=":material/swap_horiz:")
 
 
 def location_picker(general, *, key_prefix="loc"):

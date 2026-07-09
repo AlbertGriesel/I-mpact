@@ -55,20 +55,23 @@ def _journey_html():
 
 
 def _logged_out_hero():
-    left, right = st.columns([1.35, 1], gap="large")
+    # LEFT — the pitch + actions; RIGHT — a useful "how it works" journey that
+    # fills the space intentionally (the decorative meadow block was removed per
+    # request, so the hero is focused on what the user should DO, not scenery).
+    left, right = st.columns([1.25, 1], gap="large")
     with left:
         st.markdown(brand_lockup(), unsafe_allow_html=True)
-        st.title("Understand your impact. Grow something better.")
+        st.title("Measure and improve your home or business impact.")
         st.markdown(
-            "<p class='hero-sub'>Measure <b>water</b>, <b>electricity</b> and "
-            "<b>carbon</b> impact for your <b>home or business</b>. Get clear "
-            "results, practical goals and AI-guided ways to improve.</p>",
+            "<p class='hero-sub'>Track <b>water</b>, <b>electricity</b> and "
+            "<b>carbon</b>, see your <b>biggest impact areas</b>, and get "
+            "practical, AI-guided ways to improve.</p>",
             unsafe_allow_html=True)
         st.markdown(
-            "<p class='hero-note'>Built for individuals, households and "
-            "businesses across South Africa and Africa.</p>",
+            "<p class='hero-note'>For households <b>and</b> businesses across "
+            "South Africa and Africa — same engine, tuned to who you are.</p>",
             unsafe_allow_html=True)
-        st.markdown("<div style='height:.5rem'></div>", unsafe_allow_html=True)
+        st.markdown("<div style='height:.4rem'></div>", unsafe_allow_html=True)
         _cta("Try the assessment — no account needed", "assessment",
              primary=True, key="cta_guest")
         c1, c2 = st.columns(2)
@@ -79,17 +82,11 @@ def _logged_out_hero():
             _cta("Log in", "account", primary=False, key="cta_login")
         st.caption("Complete the whole thing as a guest and see your results — "
                    "create an account any time to save them.")
-        st.markdown(_journey_html(), unsafe_allow_html=True)
     with right:
-        # An environmental scene (the illustrated world) — NOT the daisy mascot,
-        # which is reserved for guidance/loading/achievement contexts (brief §1).
-        # The "What improvement looks like / Clear skies" explainer card was
-        # removed per request — the meadow alone carries the hero visual.
-        st.markdown("<div style='height:1.4rem'></div>", unsafe_allow_html=True)
-        st.markdown(meadow(0.85, "A greener world, together",
-                           caption="Water, energy and carbon — for homes and "
-                                   "businesses alike."),
+        st.markdown("<div style='height:1.1rem'></div>", unsafe_allow_html=True)
+        st.markdown("<div class='eyebrow'>How it works</div>",
                     unsafe_allow_html=True)
+        st.markdown(_journey_html(), unsafe_allow_html=True)
 
 
 def _eco_stats(r, score):

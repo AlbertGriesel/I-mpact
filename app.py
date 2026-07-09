@@ -25,7 +25,7 @@ import ai
 import database as db
 from views import (home, account, assessment, chat_assessment, dashboard,
                    information, profile, community, settings, assistant,
-                   offsets)
+                   offsets, tutorial)
 from views.common import latest_score
 from visuals import (inject_theme, enhance_ui, scroll_top, user_chip,
                      LOGO_FULL, LOGO_ICON)
@@ -184,3 +184,8 @@ nav.run()
 
 # ---------------------------------------------- floating assistant FAB (§18)
 assistant.render_floating(user)
+
+# ------------------------------------------- first-time product tour (§1)
+# Rendered last so the sidebar nav and the assistant FAB it points at already
+# exist in the DOM; shows once per new user/guest, then persists as done.
+tutorial.render(user)

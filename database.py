@@ -142,6 +142,10 @@ def init_db():
                          "NULL DEFAULT 'sprout'")
         if "avatar_photo" not in ucols:
             conn.execute("ALTER TABLE users ADD COLUMN avatar_photo TEXT")
+        # first-time product tour completion (0|1) — so it shows only once
+        if "tutorial_done" not in ucols:
+            conn.execute("ALTER TABLE users ADD COLUMN tutorial_done INTEGER "
+                         "NOT NULL DEFAULT 0")
 
 
 def _now():
@@ -202,7 +206,7 @@ def update_user(user_id, **fields):
     allowed = {"display_name", "privacy", "public_fields", "story_consent",
                "reminder_cadence", "reminders_enabled", "unit_period",
                "avatar", "country", "theme", "language", "account_type",
-               "avatar_mode", "avatar_photo"}
+               "avatar_mode", "avatar_photo", "tutorial_done"}
     sets, vals = [], []
     for k, v in fields.items():
         if k in allowed:

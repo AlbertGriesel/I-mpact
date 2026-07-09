@@ -647,6 +647,16 @@ def inject_theme(score=None, theme="light"):
     [data-testid="stColumn"] div[data-testid="stElementContainer"]:has(.impact-kpi) {{
         flex: 1 0 auto; height: 100%;
     }}
+    /* §5 — the two assessment-method cards: equal height, action links
+       bottom-aligned so the pair reads as one symmetrical choice. */
+    .st-key-measure_cards [data-testid="stColumn"] > div[data-testid="stVerticalBlock"],
+    .st-key-measure_cards div[data-testid="stVerticalBlockBorderWrapper"],
+    .st-key-measure_cards div[data-testid="stLayoutWrapper"] {{ height: 100%; }}
+    .st-key-measure_cards div[data-testid="stLayoutWrapper"]
+        > div[data-testid="stVerticalBlock"] {{
+        height: 100%; display: flex; flex-direction: column;
+    }}
+    .st-key-measure_cards [data-testid="stPageLink"] {{ margin-top: auto; }}
     [data-testid="stColumn"] .stMarkdown:has(.stat-tile),
     [data-testid="stColumn"] .stMarkdown:has(.stat-tile) > div,
     [data-testid="stColumn"] div[data-testid="stMarkdownContainer"]:has(.stat-tile),
@@ -827,50 +837,39 @@ def inject_theme(score=None, theme="light"):
        never reads as flicker/jitter; it only responds to hover. */
     .st-key-assistant_fab {{
         position: fixed; bottom: 26px; right: 26px; z-index: 999991;
-        width: 64px;
+        width: 64px; height: 64px;
     }}
-    /* static affordance ring — no animation, so nothing moves on its own */
+    /* static affordance ring — never changes, so nothing moves on its own */
     .st-key-assistant_fab::before {{
-        content: ""; position: absolute; left: -4px; bottom: -4px;
+        content: ""; position: absolute; left: -4px; top: -4px;
         width: 72px; height: 72px; border-radius: 50%;
         background: {GREEN}; opacity: .16; z-index: -1;
         pointer-events: none;
     }}
-    /* hover label — appears to the LEFT of the round launcher */
-    .st-key-assistant_fab::after {{
-        content: "Ask I/mpact"; position: absolute; right: 76px; bottom: 19px;
-        background: #12352a; color: #fff; font-family: 'Baloo 2', sans-serif;
-        font-weight: 700; font-size: .92rem; white-space: nowrap;
-        padding: .38rem .7rem; border-radius: 12px;
-        box-shadow: 0 8px 20px rgba(20,60,42,.28);
-        opacity: 0; transform: translateX(8px); pointer-events: none;
-        transition: opacity .2s ease, transform .2s ease;
-    }}
-    .st-key-assistant_fab:hover::after {{ opacity: 1; transform: translateX(0); }}
     .st-key-assistant_fab button {{
-        width: 64px; height: 64px; border-radius: 50% !important;
-        border: none !important;
+        width: 64px !important; height: 64px !important; border-radius: 50% !important;
+        border: none !important; padding: 0 !important; min-height: 0 !important;
         background:
             url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'><path d='M10 9h28a4 4 0 0 1 4 4v16a4 4 0 0 1-4 4H22l-9 7v-7h-3a4 4 0 0 1-4-4V13a4 4 0 0 1 4-4z' fill='white'/><circle cx='19' cy='21' r='2.3' fill='%232E9E63'/><circle cx='27' cy='21' r='2.3' fill='%232E9E63'/><circle cx='35' cy='21' r='2.3' fill='%232E9E63'/><path d='M38 6l1.4 3.6L43 11l-3.6 1.4L38 16l-1.4-3.6L33 11l3.6-1.4z' fill='%23FFC94D'/></svg>")
             center / 34px 34px no-repeat,
             linear-gradient(135deg, {GREEN}, #46b87c) !important;
         box-shadow: 0 10px 26px rgba(27,94,59,0.35);
-        /* §7 flicker fix: NO idle animation and NO translate on hover — the
-           button's position is perfectly fixed, so a stationary cursor can
-           never fall in and out of the hitbox (the enter/leave loop). Only a
-           centred scale grows it symmetrically on hover, keeping the pointer
-           inside. */
-        transition: transform .18s ease, box-shadow .18s ease, filter .18s ease;
+        /* STABILITY FIRST (brief §2): the launcher's layout box NEVER changes —
+           no idle animation, and hover changes ONLY shadow + brightness, never
+           transform / size / position. A cursor resting on it therefore cannot
+           fall out of the hitbox, so there is no enter/leave flicker loop. The
+           !important on transform defeats the global button-hover translateY. */
+        transform: none !important;
+        transition: box-shadow .18s ease, filter .18s ease;
     }}
     .st-key-assistant_fab button:hover {{
-        /* !important so the global button hover (which uses translateY and has
-           higher specificity) can't move the FAB up and cause the enter/leave
-           flicker loop — a centred scale is the ONLY hover transform allowed. */
-        transform: scale(1.08) !important;
-        filter: brightness(1.05);
-        box-shadow: 0 16px 36px rgba(27,94,59,0.45);
+        transform: none !important;
+        filter: brightness(1.06);
+        box-shadow: 0 15px 34px rgba(27,94,59,0.5);
     }}
-    .st-key-assistant_fab button:active {{ transform: scale(1.03) !important; }}
+    .st-key-assistant_fab button:active {{
+        transform: none !important; filter: brightness(0.98);
+    }}
     .st-key-assistant_fab button p {{ display: none; }}
 
     /* floating assistant panel — a fully OPAQUE overlay (§4). The solid
@@ -982,6 +981,10 @@ def _v2_css(p, night):
         margin-top:.35rem; overflow-wrap:anywhere; }
     .hero-mood { font-family:'Baloo 2',sans-serif; font-weight:800;
         font-size:.98rem; color: var(--imp-green); }
+    /* dashboard hero row: snapshot card anchors the centre; avatar + score ring
+       align to the same top edge, so the row reads as one composed unit. */
+    .st-key-hero_row .st-key-band_snapshot { margin: 0 !important; }
+    .st-key-hero_row [data-testid="stColumn"] { align-self: flex-start; }
 
     /* --- cards: soft, organic, NOT a uniform SaaS grid -------------------
        near-invisible borders + layered green-tinted shadow + big radius, so

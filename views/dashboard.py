@@ -32,7 +32,7 @@ from views.common import (current_user, guest_assessment, PERIODS, from_month,
 import avatar as av
 from visuals import (score_ring, pill, icon,
                      celebrate, scroll_to_anchor, reservoir, sky_clearing,
-                     energy_tile, confidence_badge, env_tier, GREEN)
+                     energy_tile, confidence_badge, env_tier, TIER_LABEL, GREEN)
 
 _DONUT_COLORS = ["#2E9E63", "#7EC8E3", "#F2C14E", "#B0713C", "#1B5E3B",
                  "#57b97c", "#9aa3ad"]
@@ -121,50 +121,65 @@ def _render_hero(score, snapshot, refresh_cb=None, user=None):
     tier = env_tier(score["total"])
     st.markdown("<div class='eyebrow'>Your living snapshot</div>",
                 unsafe_allow_html=True)
-    left, right = st.columns([1, 1.25], gap="large")
-    with left:
-        if user is not None:
-            a, cc = st.columns([1, 1])
-            with a:
+
+    def _snapshot_band():
+        """CENTRE — the anchoring 'Your snapshot' card."""
+        with st.container(key="band_snapshot"):
+            head, refresh = st.columns([5, 1])
+            head.markdown("#### Your snapshot")
+            if refresh_cb is not None and refresh.button(
+                    "↻", key="btn_refresh_eval", help="Write a fresh evaluation"):
+                refresh_cb()
+                st.rerun()
+            for icon_name, color, text in [
+                    ("leaf", "#2E9E63", snapshot["overall"]),
+                    ("check", "#1d8a4e", snapshot["positive"]),
+                    ("cloud", "#b7791f", snapshot["concern"]),
+                    ("target", "#1B5E3B", snapshot["recommendation"])]:
                 st.markdown(
-                    f"<div class='hero-identity' style='padding-top:.4rem'>"
-                    f"{av.avatar_html(user, tier=tier, size=132)}"
-                    f"<div class='hero-name' style='font-size:1.1rem'>"
-                    f"{user['display_name']}</div></div>",
+                    f"<div style='display:flex;gap:.6rem;align-items:flex-start;"
+                    f"padding:.22rem 0'><span>{icon(icon_name, 17, color)}</span>"
+                    f"<span style='font-size:.95rem'>{text}</span></div>",
                     unsafe_allow_html=True)
-            with cc:
-                st.markdown(
-                    f"<div style='display:flex;justify-content:center;"
-                    f"padding-top:.3rem'>{score_ring(score['total'])}</div>",
-                    unsafe_allow_html=True)
-        else:
-            st.markdown(
-                f"<div style='display:flex;justify-content:center'>"
-                f"{score_ring(score['total'])}</div>", unsafe_allow_html=True)
+
+    def _score_col():
+        """RIGHT — score ring + the three component sub-scores."""
+        st.markdown(
+            f"<div style='display:flex;justify-content:center'>"
+            f"{score_ring(score['total'])}</div>", unsafe_allow_html=True)
         st.markdown(
             "<div style='display:flex;justify-content:center;flex-wrap:wrap;"
-            "gap:.4rem;margin-top:.6rem'>"
+            "gap:.4rem;margin-top:.55rem'>"
             + pill(f"Water {score['water']}", "water")
             + pill(f"Electricity {score['electricity']}", "bolt")
             + pill(f"Carbon {score['carbon']}", "cloud")
             + "</div>", unsafe_allow_html=True)
-    with right, st.container(key="band_snapshot"):
-        head, refresh = st.columns([5, 1])
-        head.markdown("#### Your snapshot")
-        if refresh_cb is not None and refresh.button(
-                "↻", key="btn_refresh_eval", help="Write a fresh evaluation"):
-            refresh_cb()
-            st.rerun()
-        for icon_name, color, text in [
-                ("leaf", "#2E9E63", snapshot["overall"]),
-                ("check", "#1d8a4e", snapshot["positive"]),
-                ("cloud", "#b7791f", snapshot["concern"]),
-                ("target", "#1B5E3B", snapshot["recommendation"])]:
-            st.markdown(
-                f"<div style='display:flex;gap:.6rem;align-items:flex-start;"
-                f"padding:.22rem 0'><span>{icon(icon_name, 17, color)}</span>"
-                f"<span style='font-size:.95rem'>{text}</span></div>",
-                unsafe_allow_html=True)
+
+    # One deliberately composed row, top-aligned (brief §6/§7): the snapshot
+    # card anchors the centre; avatar+name sit left, the score ring right.
+    with st.container(key="hero_row"):
+        if user is not None:
+            col_a, col_b, col_c = st.columns([1, 1.5, 1], gap="large",
+                                             vertical_alignment="top")
+            with col_a:
+                # avatar + name as ONE identity block (brief §8)
+                st.markdown(
+                    f"<div class='hero-identity'>"
+                    f"{av.avatar_html(user, tier=tier, size=128)}"
+                    f"<div class='hero-name'>{user['display_name']}</div>"
+                    f"<div class='hero-mood'>{TIER_LABEL[tier]}</div></div>",
+                    unsafe_allow_html=True)
+            with col_b:
+                _snapshot_band()
+            with col_c:
+                _score_col()
+        else:
+            col_b, col_c = st.columns([1.5, 1], gap="large",
+                                      vertical_alignment="top")
+            with col_b:
+                _snapshot_band()
+            with col_c:
+                _score_col()
 
 
 def _eco_extra(delta_tuple, benchmark, conf):
