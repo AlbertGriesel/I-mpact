@@ -604,9 +604,12 @@ def seed_demo_data():
         if get_user_by_email(p["email"]):
             continue  # already seeded — don't duplicate
         privacy = p.get("privacy", "public")
-        user = create_user(p["email"], p["name"],
-                           secrets.token_urlsafe(16),  # random pw; display-only
-                           privacy=privacy, is_demo=1, avatar=p["avatar"])
+        try:
+            user = create_user(p["email"], p["name"],
+                               secrets.token_urlsafe(16),  # random pw; display-only
+                               privacy=privacy, is_demo=1, avatar=p["avatar"])
+        except sqlite3.IntegrityError:
+            continue  # another session seeded this profile concurrently
         update_user(user["id"],
                     public_fields=p.get("fields", _FULL_PUBLIC_FIELDS),
                     story_consent=1 if p["story"] else 0)

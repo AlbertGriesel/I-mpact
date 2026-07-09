@@ -17,7 +17,6 @@ import os
 import re
 
 import streamlit as st
-from streamlit.components.v1 import html as st_html
 
 
 def _flat(svg):
@@ -1408,9 +1407,9 @@ def enhance_ui():
     # which destroys listeners registered by the previous copy. So instead of
     # a run-once flag, every render tears down the prior installation and
     # re-installs from the live iframe realm.
-    st_html("""<script>
+    st.html("""<script>
 (function () {
-  const P = window.parent;
+  const P = window;
   const doc = P.document;
   if (P.__impactCleanup) { try { P.__impactCleanup(); } catch (err) {} }
 
@@ -1488,16 +1487,16 @@ def enhance_ui():
     stopHold();
   };
 })();
-</script>""", height=0)
+</script>""")
 
 
 def scroll_to_anchor(anchor):
     """Scroll the app to a heading anchor (e.g. the Goals section) and keep
     re-asserting it briefly, because charts that finish laying out after the
     first scroll push the target back down."""
-    st_html(f"""<script>
+    st.html(f"""<script>
 (function () {{
-  const doc = window.parent.document;
+  const doc = document;
   let tries = 0;
   const timer = setInterval(() => {{
     tries += 1;
@@ -1513,7 +1512,7 @@ def scroll_to_anchor(anchor):
     if (tries > 12) clearInterval(timer);
   }}, 450);
 }})();
-</script>""", height=0)
+</script>""")
 
 
 def scroll_chat_to_prompt():
@@ -1524,9 +1523,9 @@ def scroll_chat_to_prompt():
     Scoped to the assistant panel's scroll container only; it does NOT move
     the whole page, and it self-terminates so it never fights manual scrolling
     on later rerenders (the caller sets the trigger flag exactly once)."""
-    st_html("""<script>
+    st.html("""<script>
 (function () {
-  const doc = window.parent.document;
+  const doc = document;
   let box = null, lastUser = null, finds = 0;
 
   function locate() {
@@ -1577,7 +1576,7 @@ def scroll_chat_to_prompt():
     else if (finds > 15) clearInterval(boot);
   }, 100);
 })();
-</script>""", height=0)
+</script>""")
 
 
 def active_theme():
@@ -1633,9 +1632,9 @@ def user_chip(user, score, theme="light"):
         f"<span class='avatar'>{sprout}</span></div>",
         unsafe_allow_html=True)
     # wire the click to the sidebar Profile nav link (client-side nav)
-    st_html("""<script>
+    st.html("""<script>
 (function () {
-  const doc = window.parent.document;
+  const doc = document;
   const chip = doc.querySelector('.impact-userchip');
   if (!chip || chip.dataset.wired) return;
   const link = [...doc.querySelectorAll('section[data-testid="stSidebar"] a')]
@@ -1650,14 +1649,14 @@ def user_chip(user, score, theme="light"):
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); }
   });
 })();
-</script>""", height=0)
+</script>""")
 
 
 def scroll_top():
     """Scroll the app back to the top (used on page/step changes)."""
-    st_html("""<script>
+    st.html("""<script>
 (function () {
-  const doc = window.parent.document;
+  const doc = document;
   const targets = [
     doc.querySelector('section[data-testid="stMain"]'),
     doc.querySelector('section.main'),
@@ -1666,15 +1665,15 @@ def scroll_top():
   ];
   targets.forEach(t => { if (t && t.scrollTo) t.scrollTo({top: 0, left: 0, behavior: 'instant'}); });
 })();
-</script>""", height=0)
+</script>""")
 
 
 def celebrate():
     """Themed celebration: leaves and water droplets drift down — replaces
     st.balloons()."""
-    st_html("""<script>
+    st.html("""<script>
 (function () {
-  const doc = window.parent.document;
+  const doc = document;
   if (doc.getElementById('impact-celebrate')) return;
   const wrap = doc.createElement('div');
   wrap.id = 'impact-celebrate';
@@ -1709,7 +1708,7 @@ def celebrate():
   doc.body.appendChild(wrap);
   setTimeout(() => wrap.remove(), 7500);
 })();
-</script>""", height=0)
+</script>""")
 
 
 # ---------------------------------------------------------------------------
@@ -1866,8 +1865,10 @@ def mascot_html(score, height=260, caption=True, theme="light"):
 def render_mascot(score, height=260, caption=True, theme=None):
     if theme is None:
         theme = active_theme()
-    st_html(mascot_html(score, height=height, caption=caption, theme=theme),
-            height=height + (48 if caption else 8))
+    h = height + (48 if caption else 8)
+    st.html(f'<div style="height:{h}px;overflow:hidden">'
+            + mascot_html(score, height=height, caption=caption, theme=theme)
+            + '</div>')
 
 
 def score_ring(score, label="Impact score"):
