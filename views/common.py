@@ -73,9 +73,9 @@ def measure_intro(active):
         ("manual", "assessment", "edit", "Fill it in myself",
          "Answer a structured set of questions about your water, electricity, "
          "travel and lifestyle. Upload a bill and we read it for you."),
-        ("chat", "chat", "chat", "Chat through it",
-         "Have a conversation with Sprout, our assistant. It asks the same "
-         "questions naturally and helps you complete the assessment."),
+        ("chat", "chat", "chat", "AI Assessment",
+         "Chat naturally with our AI assistant. It asks the same questions in "
+         "conversation and fills in your assessment as you talk."),
     ]
     c1, c2 = st.columns(2)
     for col, (kind, page_key, ic, title, desc) in zip((c1, c2), cards):

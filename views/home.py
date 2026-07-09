@@ -83,13 +83,12 @@ def _logged_out_hero():
     with right:
         # An environmental scene (the illustrated world) — NOT the daisy mascot,
         # which is reserved for guidance/loading/achievement contexts (brief §1).
+        # The "What improvement looks like / Clear skies" explainer card was
+        # removed per request — the meadow alone carries the hero visual.
         st.markdown("<div style='height:1.4rem'></div>", unsafe_allow_html=True)
         st.markdown(meadow(0.85, "A greener world, together",
                            caption="Water, energy and carbon — for homes and "
                                    "businesses alike."),
-                    unsafe_allow_html=True)
-        st.markdown(sky_clearing("Clear skies", "lower carbon, cleaner air",
-                                 "What improvement looks like", 0.82),
                     unsafe_allow_html=True)
 
 

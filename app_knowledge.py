@@ -21,10 +21,10 @@ PAGES = {
                        "transport, flights and lifestyle yourself, step by "
                        "step. You can upload a water or electricity bill and "
                        "we read it for you (you confirm every value)."),
-        ("Chat Assessment", "The SAME assessment, done as a natural chat with "
-                            "Sprout. It asks the same questions, uses the same "
-                            "calculations and produces the same results — just "
-                            "conversationally. Pick whichever you prefer."),
+        ("AI Assessment", "The SAME assessment, done as a natural chat with "
+                          "the AI assistant. It asks the same questions, uses "
+                          "the same calculations and produces the same results "
+                          "— just conversationally. Pick whichever you prefer."),
     ],
     "Improve": [
         ("Dashboard", "Your results: impact score, water / electricity / "
@@ -68,7 +68,7 @@ FEATURES = {
         "third parties without your permission. Bills and raw data stay "
         "private; only summary stats you explicitly approve can appear "
         "publicly. See Settings for the controls.",
-    "Repeating an assessment": "Go to the Assessment (or Chat Assessment) page "
+    "Repeating an assessment": "Go to the Assessment (or AI Assessment) page "
         "again — returning users land on a review hub with everything "
         "pre-filled, so you only update what changed.",
     "Carbon offsets": "Under Improve, the Carbon Offsets guidance explains "

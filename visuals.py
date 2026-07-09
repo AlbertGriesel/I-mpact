@@ -197,6 +197,7 @@ _ICON_PATHS = {
     "key": "<circle cx='8' cy='15' r='4'/><path d='M11 12 21 2M16 7l3 3'/>",
     "battery": "<rect x='2.5' y='8' width='16' height='8.5' rx='2'/><path d='M21.5 10.5v3.5'/><path d='M11 9.5 8.5 12.4h4L10 15.2'/>",
     "search": "<circle cx='10.5' cy='10.5' r='6.5'/><path d='M15.5 15.5 21 21'/>",
+    "circle": "<circle cx='12' cy='12' r='7.5'/>",
 }
 
 
@@ -634,11 +635,27 @@ def inject_theme(score=None, theme="light"):
         color: {"#8fe0ad" if night else "#155e3b"} !important; font-weight: 800 !important;
     }}
     section[data-testid="stSidebar"] [data-testid="stSidebarNav"] {{ margin-bottom: .4rem; }}
-    /* §20 — paired columns stretch to equal height */
+    /* §20 / KPI symmetry — paired columns stretch to equal height, and the
+       whole wrapper chain down to the card/tile fills that height so three
+       side-by-side KPI tiles align top AND bottom regardless of text length. */
     [data-testid="stHorizontalBlock"] {{ align-items: stretch; }}
     [data-testid="stColumn"] > div[data-testid="stVerticalBlock"] {{ height: 100%; }}
     [data-testid="stColumn"] div[data-testid="stVerticalBlockBorderWrapper"],
     [data-testid="stColumn"] > div[data-testid="stLayoutWrapper"] {{ height: 100%; }}
+    /* the KPI tile lives 4 wrappers deep inside a flex-column vertical block;
+       make each wrapper fill so the tile reaches the stretched column height */
+    [data-testid="stColumn"] div[data-testid="stElementContainer"]:has(.stat-tile),
+    [data-testid="stColumn"] div[data-testid="stElementContainer"]:has(.impact-kpi) {{
+        flex: 1 0 auto; height: 100%;
+    }}
+    [data-testid="stColumn"] .stMarkdown:has(.stat-tile),
+    [data-testid="stColumn"] .stMarkdown:has(.stat-tile) > div,
+    [data-testid="stColumn"] div[data-testid="stMarkdownContainer"]:has(.stat-tile),
+    [data-testid="stColumn"] .stMarkdown:has(.impact-kpi),
+    [data-testid="stColumn"] .stMarkdown:has(.impact-kpi) > div,
+    [data-testid="stColumn"] div[data-testid="stMarkdownContainer"]:has(.impact-kpi) {{
+        height: 100%;
+    }}
     /* §10 — editable fields respond gently to focus */
     .stTextInput input:focus, .stNumberInput input:focus,
     .stTextArea textarea:focus {{
@@ -718,6 +735,13 @@ def inject_theme(score=None, theme="light"):
     div[class*="st-key-band"] div[data-testid="stLayoutWrapper"] {{
         background: {"rgba(255,255,255,0.55)" if not night else "rgba(255,255,255,0.05)"};
         box-shadow: none;
+    }}
+    /* §10 (UX pass) — consistent spacing rhythm inside section intros: a tidy
+       gap between a heading and its description, and between grouped options,
+       so the top box breathes without becoming oversized. */
+    div[class*="st-key-band"] [data-testid="stHeading"] {{ margin-bottom: .15rem; }}
+    div[class*="st-key-band"] [data-testid="stCaptionContainer"] {{
+        margin-top: 0; margin-bottom: .5rem;
     }}
 
     /* top-right user chip: mascot → username → avatar */
@@ -800,18 +824,17 @@ def inject_theme(score=None, theme="light"):
 
     /* floating AI-assistant launcher (brief §7): a clearly AI/chat identity —
        a speech bubble with a spark — kept DISTINCT from the daisy mascot and
-       the user avatar. It breathes at rest, shows a pulse halo to signal it's
-       interactive, and reveals an "Ask I/mpact" label on hover. */
+       the user avatar. Deliberately STATIC at rest (no idle animation) so it
+       never reads as flicker/jitter; it only responds to hover. */
     .st-key-assistant_fab {{
         position: fixed; bottom: 26px; right: 26px; z-index: 999991;
         width: 64px;
     }}
-    /* pulse halo — a gentle attention ring so users notice it's clickable */
+    /* static affordance ring — no animation, so nothing moves on its own */
     .st-key-assistant_fab::before {{
-        content: ""; position: absolute; left: 0; bottom: 0;
-        width: 64px; height: 64px; border-radius: 50%;
-        background: {GREEN}; opacity: .35; z-index: -1;
-        animation: fab-pulse 2.8s ease-out infinite;
+        content: ""; position: absolute; left: -4px; bottom: -4px;
+        width: 72px; height: 72px; border-radius: 50%;
+        background: {GREEN}; opacity: .16; z-index: -1;
         pointer-events: none;
     }}
     /* hover label — appears to the LEFT of the round launcher */
@@ -833,26 +856,23 @@ def inject_theme(score=None, theme="light"):
             center / 34px 34px no-repeat,
             linear-gradient(135deg, {GREEN}, #46b87c) !important;
         box-shadow: 0 10px 26px rgba(27,94,59,0.35);
-        animation: fab-breathe 4s ease-in-out infinite;
-        transition: transform .25s cubic-bezier(.34,1.56,.64,1),
-                    box-shadow .25s ease;
+        /* §7 flicker fix: NO idle animation and NO translate on hover — the
+           button's position is perfectly fixed, so a stationary cursor can
+           never fall in and out of the hitbox (the enter/leave loop). Only a
+           centred scale grows it symmetrically on hover, keeping the pointer
+           inside. */
+        transition: transform .18s ease, box-shadow .18s ease, filter .18s ease;
     }}
     .st-key-assistant_fab button:hover {{
-        animation: none;
-        transform: scale(1.12) translateY(-3px);
+        /* !important so the global button hover (which uses translateY and has
+           higher specificity) can't move the FAB up and cause the enter/leave
+           flicker loop — a centred scale is the ONLY hover transform allowed. */
+        transform: scale(1.08) !important;
+        filter: brightness(1.05);
         box-shadow: 0 16px 36px rgba(27,94,59,0.45);
     }}
-    .st-key-assistant_fab button:active {{ transform: scale(1.04); }}
+    .st-key-assistant_fab button:active {{ transform: scale(1.03) !important; }}
     .st-key-assistant_fab button p {{ display: none; }}
-    @keyframes fab-breathe {{
-        0%, 100% {{ transform: translateY(0) scale(1); }}
-        50% {{ transform: translateY(-3px) scale(1.03); }}
-    }}
-    @keyframes fab-pulse {{
-        0% {{ transform: scale(1); opacity: .35; }}
-        70% {{ transform: scale(1.5); opacity: 0; }}
-        100% {{ transform: scale(1.5); opacity: 0; }}
-    }}
 
     /* floating assistant panel — a fully OPAQUE overlay (§4). The solid
        backing is set on the keyed container itself (reliable across Streamlit
@@ -865,6 +885,15 @@ def inject_theme(score=None, theme="light"):
         border-radius: 18px !important;
         box-shadow: 0 18px 48px rgba(27,94,59,0.22) !important;
         padding: .35rem .7rem !important;
+    }}
+    /* §7 stability: the panel is a FIXED overlay — the read-only hover-lift
+       (which moves containers up 2px) must never apply to it or its inner
+       border wrappers, or hovering the close button shifts the whole panel and
+       triggers an enter/leave flicker loop. Pin every transform to none. */
+    .st-key-assistant_panel:hover,
+    .st-key-assistant_panel [data-testid="stVerticalBlockBorderWrapper"]:hover,
+    .st-key-assistant_panel [data-testid="stLayoutWrapper"]:hover {{
+        transform: none !important;
     }}
     /* chat bubbles: assistant on very light green, user on light blue —
        both fully opaque and readable on the white panel. */
@@ -1056,6 +1085,8 @@ def _v2_css(p, night):
         line-height:1.2; }
     .score-ring-status .dot { width:9px; height:9px; border-radius:50%;
         flex:0 0 auto; box-shadow:0 0 0 3px rgba(0,0,0,.04); }
+    .score-ring-dir { font-family:'Nunito',sans-serif; font-size:.8rem;
+        font-weight:600; color:var(--imp-muted); margin-top:.1rem; }
     @media (prefers-reduced-motion: reduce) {
       .score-ring:hover svg { transform:none !important; }
     }
@@ -1870,4 +1901,5 @@ def score_ring(score, label="Impact score"):
       <div class="score-ring-status" style="color:{txt}">
         <span class="dot" style="background:{color}"></span>{score_label(val)}
       </div>
+      <div class="score-ring-dir">Higher is better · 50 avg · 100 net&nbsp;zero</div>
     </div>""")

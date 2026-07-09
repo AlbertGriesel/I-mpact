@@ -288,8 +288,13 @@ def _friendly_error(exc):
         return ("AI is unavailable: the API key looks missing or invalid. "
                 "Re-connect it under Settings.")
     if "quota" in msg or "rate" in msg or "429" in msg or "resource_exhausted" in msg:
-        return ("The free tier is briefly rate-limited (a few requests per "
-                "minute). Wait a moment and try again.")
+        if "free_tier" in msg or "free tier" in msg:
+            return ("You've hit the Google Gemini FREE-tier limit. This is "
+                    "either the per-minute cap (wait ~60 seconds and retry) or "
+                    "the daily cap (resets the next day). For steady use, "
+                    "connect a billing-enabled Gemini key under Settings.")
+        return ("The AI is rate-limited right now (a few requests per minute). "
+                "Wait a moment and try again.")
     if "permission" in msg or "403" in msg:
         return "AI is unavailable: the key lacks permission for this model."
     if "connection" in msg or "network" in msg:
@@ -1256,6 +1261,13 @@ def generate_avatar(image_bytes, mime_type="image/png"):
         return False, ("The avatar service didn't return an image this time — "
                        "your current avatar is unchanged. Try another photo.")
     except Exception as exc:  # noqa: BLE001 — never crash the profile page
+        low = str(exc).lower()
+        if "429" in low or "resource_exhausted" in low or "quota" in low:
+            return False, ("Avatar generation is out of Gemini image quota. "
+                           "Photo→avatar uses gemini-2.5-flash-image, whose "
+                           "free-tier quota is tiny (often zero) — it needs a "
+                           "billing-enabled Google key. Your current avatar is "
+                           "unchanged; the illustrated Sprout works without AI.")
         return False, _friendly_error(exc)
 
 

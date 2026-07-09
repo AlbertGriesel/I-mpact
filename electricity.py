@@ -34,8 +34,8 @@ def _clear_bill_values(data):
 
 
 def _upload_path(data):
-    from views.common import privacy_note
-    privacy_note("upload")
+    # Consent-critical provider warning stays inline; fuller data-handling
+    # detail moves to the section bottom (brief §4/§13).
     note = ai.provider_privacy_note()
     if note:
         st.caption(note)
@@ -200,6 +200,12 @@ def render(data):
         _appliance_estimate_form(data)
     else:
         st.success("Measured electricity captured — appliance questions skipped.")
+
+    # data-handling detail at the bottom of the section (brief §4/§13)
+    if mode == _UPLOAD:
+        from views.common import privacy_note
+        st.divider()
+        privacy_note("upload")
     return data
 
 

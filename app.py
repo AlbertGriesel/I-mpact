@@ -83,10 +83,10 @@ inject_theme(score, theme)
 
 def _goals_page():
     """Goals is a real navigation destination (stays highlighted in the
-    sidebar); its content is the Dashboard's plan section, reached via the
-    stable 'plan' anchor. The scroll flag is set on arrival in the sidebar
-    page-change handler below, so in-page interactions don't re-scroll."""
-    dashboard.render()
+    sidebar). It renders the shared dashboard in GOALS-FIRST mode, so the
+    weekly plan shows at the top of the page immediately — no load-at-top-then-
+    scroll (§8). Same components and goal logic as the dashboard, no duplicate."""
+    dashboard.render(goals_first=True)
 
 
 # -------------------------------------------------------------- page graph
@@ -97,7 +97,7 @@ pages = {
                        icon=":material/person:", url_path="account"),
     "assessment": st.Page(assessment.render, title="Assessment",
                           icon=":material/edit_note:", url_path="assessment"),
-    "chat": st.Page(chat_assessment.render, title="Chat Assessment",
+    "chat": st.Page(chat_assessment.render, title="AI Assessment",
                     icon=":material/forum:", url_path="chat"),
     "dashboard": st.Page(dashboard.render, title="Dashboard",
                          icon=":material/dashboard:", url_path="dashboard"),

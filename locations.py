@@ -21,6 +21,9 @@ path via schema.merge_updates, so no flow can store an unrecognised location):
 """
 
 import re
+from functools import lru_cache
+
+import pycountry
 
 # Sentinel option offered at the end of every known region/municipality list so
 # people in areas we don't itemise can still proceed (stored as "" upstream).
@@ -117,63 +120,25 @@ _ZA = {
     },
 }
 
-# Level-1 regions for other countries where the list is well-known and stable.
-# No municipality level is claimed for these (sub_term omitted).
-_US_STATES = [
-    "Alabama", "Alaska", "Arizona", "Arkansas", "California", "Colorado",
-    "Connecticut", "Delaware", "Florida", "Georgia", "Hawaii", "Idaho",
-    "Illinois", "Indiana", "Iowa", "Kansas", "Kentucky", "Louisiana", "Maine",
-    "Maryland", "Massachusetts", "Michigan", "Minnesota", "Mississippi",
-    "Missouri", "Montana", "Nebraska", "Nevada", "New Hampshire", "New Jersey",
-    "New Mexico", "New York", "North Carolina", "North Dakota", "Ohio",
-    "Oklahoma", "Oregon", "Pennsylvania", "Rhode Island", "South Carolina",
-    "South Dakota", "Tennessee", "Texas", "Utah", "Vermont", "Virginia",
-    "Washington", "West Virginia", "Wisconsin", "Wyoming",
-]
+# Curated overrides: countries where we hold richer data than the generic
+# subdivision source. South Africa (the primary market) is populated down to
+# municipality level; every OTHER country's first-level regions come from the
+# comprehensive ISO 3166-2 dataset (pycountry) below, so coverage is broad and
+# maintainable without hardcoding thousands of places (brief §3).
+_CURATED = {"South Africa": _ZA}
 
-SUBDIVISIONS = {
-    "South Africa": _ZA,
-    "United States": {"term": "State", "regions": {s: [] for s in _US_STATES}},
-    "United Kingdom": {"term": "Nation", "regions": {
-        "England": [], "Scotland": [], "Wales": [], "Northern Ireland": []}},
-    "Canada": {"term": "Province / Territory", "regions": {r: [] for r in [
-        "Alberta", "British Columbia", "Manitoba", "New Brunswick",
-        "Newfoundland and Labrador", "Northwest Territories", "Nova Scotia",
-        "Nunavut", "Ontario", "Prince Edward Island", "Quebec", "Saskatchewan",
-        "Yukon"]}},
-    "Australia": {"term": "State / Territory", "regions": {r: [] for r in [
-        "Australian Capital Territory", "New South Wales", "Northern Territory",
-        "Queensland", "South Australia", "Tasmania", "Victoria",
-        "Western Australia"]}},
-    "Namibia": {"term": "Region", "regions": {r: [] for r in [
-        "Erongo", "Hardap", "ǁKaras", "Kavango East", "Kavango West", "Khomas",
-        "Kunene", "Ohangwena", "Omaheke", "Omusati", "Oshana", "Oshikoto",
-        "Otjozondjupa", "Zambezi"]}},
-    "Botswana": {"term": "District", "regions": {r: [] for r in [
-        "Central", "Chobe", "Ghanzi", "Kgalagadi", "Kgatleng", "Kweneng",
-        "North East", "North West", "South East", "Southern"]}},
-    "Zimbabwe": {"term": "Province", "regions": {r: [] for r in [
-        "Bulawayo", "Harare", "Manicaland", "Mashonaland Central",
-        "Mashonaland East", "Mashonaland West", "Masvingo", "Matabeleland North",
-        "Matabeleland South", "Midlands"]}},
-    # Kenya's 47 constitutional counties (2010) — official, stable level-1 list.
-    "Kenya": {"term": "County", "regions": {r: [] for r in [
-        "Baringo", "Bomet", "Bungoma", "Busia", "Elgeyo-Marakwet", "Embu",
-        "Garissa", "Homa Bay", "Isiolo", "Kajiado", "Kakamega", "Kericho",
-        "Kiambu", "Kilifi", "Kirinyaga", "Kisii", "Kisumu", "Kitui", "Kwale",
-        "Laikipia", "Lamu", "Machakos", "Makueni", "Mandera", "Marsabit",
-        "Meru", "Migori", "Mombasa", "Murang'a", "Nairobi", "Nakuru", "Nandi",
-        "Narok", "Nyamira", "Nyandarua", "Nyeri", "Samburu", "Siaya",
-        "Taita-Taveta", "Tana River", "Tharaka-Nithi", "Trans Nzoia",
-        "Turkana", "Uasin Gishu", "Vihiga", "Wajir", "West Pokot"]}},
-    # Nigeria's 36 states plus the Federal Capital Territory — official list.
-    "Nigeria": {"term": "State", "regions": {r: [] for r in [
-        "Abia", "Adamawa", "Akwa Ibom", "Anambra", "Bauchi", "Bayelsa",
-        "Benue", "Borno", "Cross River", "Delta", "Ebonyi", "Edo", "Ekiti",
-        "Enugu", "Federal Capital Territory", "Gombe", "Imo", "Jigawa",
-        "Kaduna", "Kano", "Katsina", "Kebbi", "Kogi", "Kwara", "Lagos",
-        "Nasarawa", "Niger", "Ogun", "Ondo", "Osun", "Oyo", "Plateau",
-        "Rivers", "Sokoto", "Taraba", "Yobe", "Zamfara"]}},
+# ISO 3166-2 subdivision types → a friendly, singular field label. Anything not
+# listed falls back to the generic "Region / Province / State".
+_TERM_MAP = {
+    "province": "Province", "state": "State", "region": "Region",
+    "county": "County", "district": "District", "department": "Department",
+    "canton": "Canton", "prefecture": "Prefecture", "emirate": "Emirate",
+    "governorate": "Governorate", "oblast": "Oblast", "territory": "Territory",
+    "municipality": "Municipality", "parish": "Parish", "division": "Division",
+    "country": "Nation", "autonomous community": "Autonomous community",
+    "capital city": "Region", "capital district": "Region",
+    "capital territory": "Territory", "special municipality": "Municipality",
+    "metropolitan department": "Department",
 }
 
 
@@ -185,43 +150,106 @@ def is_country(name):
     return name in COUNTRIES
 
 
-def _entry(country):
-    return SUBDIVISIONS.get(country)
+@lru_cache(maxsize=1)
+def _name_to_alpha2():
+    """Map a simplified country name to its ISO alpha-2 code, using pycountry's
+    name / official_name / common_name plus a few aliases for the names this app
+    uses that differ from pycountry's."""
+    m = {}
+    for c in pycountry.countries:
+        for attr in ("name", "official_name", "common_name"):
+            v = getattr(c, attr, None)
+            if v:
+                m.setdefault(_simplify(v), c.alpha_2)
+    m.update({
+        "southkorea": "KR", "northkorea": "KP", "russia": "RU", "iran": "IR",
+        "vietnam": "VN", "laos": "LA", "syria": "SY", "bolivia": "BO",
+        "tanzania": "TZ", "venezuela": "VE", "moldova": "MD", "brunei": "BN",
+        "capeverde": "CV", "congobrazzaville": "CG", "congokinshasa": "CD",
+        "cotedivoire": "CI", "swaziland": "SZ", "eswatini": "SZ",
+        "palestine": "PS", "vaticancity": "VA", "micronesia": "FM",
+        "hongkong": "HK", "taiwan": "TW", "turkey": "TR", "southsudan": "SS",
+        "capeverde ": "CV",
+    })
+    return m
+
+
+def _alpha2(country):
+    if not country:
+        return None
+    return _name_to_alpha2().get(_simplify(country))
+
+
+@lru_cache(maxsize=512)
+def _iso_first_level(alpha2):
+    """First-level ISO 3166-2 subdivisions for a country as ((name, type), …).
+    Filters to top-level entries (no parent); if a country lists only deeper
+    levels we fall back to all of them rather than showing nothing."""
+    if not alpha2:
+        return ()
+    try:
+        subs = list(pycountry.subdivisions.get(country_code=alpha2) or [])
+    except (KeyError, LookupError):
+        return ()
+    firsts = [s for s in subs if not getattr(s, "parent_code", None)]
+    if not firsts:
+        firsts = subs
+    return tuple(sorted((s.name, (s.type or "").strip()) for s in firsts))
+
+
+def _curated(country):
+    return _CURATED.get(canonical_country(country) or country)
 
 
 def has_regions(country):
-    e = _entry(country)
-    return bool(e and e.get("regions"))
+    e = _curated(country)
+    if e and e.get("regions"):
+        return True
+    return bool(_iso_first_level(_alpha2(country)))
 
 
 def region_term(country):
-    e = _entry(country)
-    return (e or {}).get("term", "Region / Province")
+    e = _curated(country)
+    if e and e.get("term"):
+        return e["term"]
+    subs = _iso_first_level(_alpha2(country))
+    if not subs:
+        return "Region / Province / State"
+    counts = {}
+    for _, typ in subs:
+        counts[typ.lower()] = counts.get(typ.lower(), 0) + 1
+    common = max(counts, key=counts.get) if counts else ""
+    return _TERM_MAP.get(common, "Region / Province / State")
 
 
 def region_options(country):
-    """Validated level-1 options for a country, or [] when we don't hold them.
-    A NOT_LISTED escape is appended so users are never blocked."""
-    e = _entry(country)
-    if not e or not e.get("regions"):
+    """Validated level-1 options for a country (curated where we have richer
+    data, else the comprehensive ISO 3166-2 set), or [] when none exist. A
+    NOT_LISTED escape is appended so users are never blocked."""
+    e = _curated(country)
+    if e and e.get("regions"):
+        return sorted(e["regions"].keys()) + [NOT_LISTED]
+    subs = _iso_first_level(_alpha2(country))
+    if not subs:
         return []
-    return sorted(e["regions"].keys()) + [NOT_LISTED]
+    return sorted(name for name, _ in subs) + [NOT_LISTED]
 
 
 def municipality_term(country):
-    e = _entry(country)
+    e = _curated(country)
     return (e or {}).get("sub_term", "Municipality / local authority")
 
 
 def has_municipalities(country, region):
-    e = _entry(country)
+    e = _curated(country)
     return bool(e and region and e.get("regions", {}).get(region))
 
 
 def municipality_options(country, region):
-    """Validated municipality options for a (country, region), or [] when we
-    don't itemise them. NOT_LISTED escape appended when we do."""
-    e = _entry(country)
+    """Validated municipality options for a (country, region). Only claimed
+    where we genuinely hold the data (currently South Africa); never invented
+    for other countries (brief §3)."""
+    e = _curated(country)
     if not e or not region:
         return []
     munis = e.get("regions", {}).get(region)
@@ -287,13 +315,14 @@ def canonical_country(value):
 
 def canonical_region(country, value):
     """Canonical level-1 region for a country, or None when the country has no
-    region data or the value doesn't unambiguously match one."""
+    region data or the value doesn't unambiguously match one. Validates against
+    the SAME option set the picker shows (curated or ISO 3166-2)."""
     if not isinstance(value, str) or not value.strip():
         return None
-    e = _entry(canonical_country(country) or country)
-    if not e or not e.get("regions"):
+    c = canonical_country(country) or country
+    regions = [r for r in region_options(c) if r != NOT_LISTED]
+    if not regions:
         return None
-    regions = list(e["regions"].keys())
     key = value.strip().lower()
     for name in regions:
         if name.lower() == key:
@@ -317,7 +346,7 @@ def canonical_municipality(country, region, value):
         return None
     c = canonical_country(country) or country
     r = canonical_region(c, region) or region
-    munis = (_entry(c) or {}).get("regions", {}).get(r) or []
+    munis = [m for m in municipality_options(c, r) if m != NOT_LISTED]
     if not munis:
         return None
     key = value.strip().lower()

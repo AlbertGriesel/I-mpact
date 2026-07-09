@@ -449,6 +449,20 @@ def _render_transparency(inputs, r):
             "estimates fill the gaps honestly. Here's each category in plain "
             "language.</div>", unsafe_allow_html=True)
 
+        # §12: make the zero-vs-skipped distinction visible in the summary.
+        status = inputs.get("section_status", {})
+        skipped = [s for s, v in status.items() if v == "skipped"]
+        zeroed = [s for s, v in status.items() if v == "zero"]
+        if skipped:
+            st.info("You skipped " + ", ".join(skipped) + " — we treated "
+                    "those as unknown and used typical estimates, not zero. "
+                    "Add them any time for a sharper picture.",
+                    icon=":material/info:")
+        if zeroed:
+            st.caption("You told us your " + ", ".join(zeroed)
+                       + " impact is zero — counted as a genuine zero, "
+                       "not estimated.")
+
         # ---------------------------------------------------------- water
         method = wtr.get("calculation_method")
         if method in ("measured_bill", "measured_manual"):
@@ -740,7 +754,72 @@ def _render_guest():
 
 # ============================ authenticated view ===========================
 
-def render():
+def _render_plan(user, latest, r):
+    """The weekly plan + ranked opportunities (§12). Extracted so BOTH the
+    dashboard and the Goals view render the SAME plan UI from the SAME goal
+    logic — Goals just renders it first (§8/§9), never a duplicate."""
+    with st.container(key="band_plan"):
+        st.subheader("Your plan for this week", anchor="plan")
+        week_goals = db.goals_for_week(user["id"])
+        done_now = []
+        for g in week_goals:
+            cols = st.columns([0.07, 0.71, 0.22])
+            checked = cols[0].checkbox(" ", value=(g["status"] == "completed"),
+                                       key=f"goal_{g['id']}",
+                                       label_visibility="collapsed")
+            saving = (f" — saves ~{g['expected_saving']:.0f} "
+                      f"{g['expected_saving_unit']}"
+                      if g.get("expected_saving") else "")
+            style = "~~" if g["status"] == "completed" else ""
+            cols[1].markdown(f"{style}**{g['title']}**{style}{saving}")
+            cols[2].markdown(pill(g["metric"]), unsafe_allow_html=True)
+            if checked and g["status"] != "completed":
+                db.set_goal_status(g["id"], "completed")
+                done_now.append(g["id"])
+            elif not checked and g["status"] == "completed":
+                db.set_goal_status(g["id"], "active")
+        if done_now:
+            st.toast("Goal completed — nicely done.",
+                     icon=":material/check_circle:")
+            achievement_toast(ach_mod.evaluate_goal_completion(user["id"]))
+            st.rerun()
+        if not week_goals:
+            st.caption("No goals yet this week — add one below.")
+
+        # more opportunities, priority-ranked (§2) and dedupe-filtered
+        active = week_goals + [g for g in db.all_goals(user["id"])
+                               if g["status"] == "active"]
+        fresh = _ranked_opportunities(latest, r, n=3, active=active)
+        if fresh:
+            st.markdown("<div style='margin-top:.4rem;font-weight:700;"
+                        "color:#1B5E3B'>Top opportunities for you, ranked</div>",
+                        unsafe_allow_html=True)
+            for i, g in enumerate(fresh):
+                cc1, cc2 = st.columns([4.2, 1])
+                reason = g.get("reason") or "A practical step from your data."
+                saving = (f" · ~{g['expected_saving']:.0f} "
+                          f"{g['expected_saving_unit']}"
+                          if g.get("expected_saving") else "")
+                cc1.markdown(f"**{g['title']}**{saving}  \n"
+                             f"<span style='font-size:.9rem;color:#5c7069'>"
+                             f"{reason}</span>",
+                             unsafe_allow_html=True)
+                if cc2.button("Add", key=f"add_cand_{i}",
+                              use_container_width=True):
+                    added, skipped = db.save_goals(user["id"], [g])
+                    if added:
+                        st.toast("Added to this week's plan.",
+                                 icon=":material/check_circle:")
+                    else:
+                        st.toast("That's already in your plan.",
+                                 icon=":material/info:")
+                    st.rerun()
+
+
+def render(goals_first=False):
+    """The results dashboard. `goals_first=True` (used by the Goals nav entry)
+    renders the weekly-plan section at the TOP so Goals opens directly on the
+    plan — no top-of-dashboard-then-scroll (§8). Same components either way."""
     user = current_user()
     if user is None:
         _render_guest()
@@ -748,7 +827,7 @@ def render():
 
     assessments = db.list_assessments(user["id"])
     if not assessments:
-        st.title("Your dashboard")
+        st.title("Your weekly plan" if goals_first else "Your dashboard")
         st.info("No assessment yet — your dashboard comes alive after the "
                 "first one (under 10 minutes).")
         pages = st.session_state.get("pages", {})
@@ -757,7 +836,7 @@ def render():
             st.page_link(pages["assessment"], label="Guided questionnaire",
                          icon=":material/edit_note:")
         with c2:
-            st.page_link(pages["chat"], label="Chat assessment",
+            st.page_link(pages["chat"], label="AI Assessment",
                          icon=":material/forum:")
         st.session_state.pop("scroll_to_goals", None)
         return
@@ -771,8 +850,15 @@ def render():
     prev = assessments[-2] if len(assessments) > 1 else None
     r = latest["results"]
 
-    st.title("Your dashboard")
+    st.title("Your weekly plan" if goals_first else "Your dashboard")
     reminder_banner(user)
+
+    # Goals-first: the plan renders at the very top so arriving via the Goals
+    # nav lands directly on it (§8), then a link down to the full dashboard.
+    if goals_first:
+        st.caption("Higher score is better · 50 is average · 100 is net zero.")
+        _render_plan(user, latest, r)
+        st.divider()
 
     # ================= TOP: mascot + scores | short AI snapshot (§10) ======
     def _refresh_eval():
@@ -830,65 +916,13 @@ def render():
         _render_donut(r["carbon"])
 
     # ================= band: merged plan (§12) — anchor for §14 ============
-    with st.container(key="band_plan"):
-        st.subheader("Your plan for this week", anchor="plan")
-        week_goals = db.goals_for_week(user["id"])
-        done_now = []
-        for g in week_goals:
-            cols = st.columns([0.07, 0.71, 0.22])
-            checked = cols[0].checkbox(" ", value=(g["status"] == "completed"),
-                                       key=f"goal_{g['id']}",
-                                       label_visibility="collapsed")
-            saving = (f" — saves ~{g['expected_saving']:.0f} "
-                      f"{g['expected_saving_unit']}"
-                      if g.get("expected_saving") else "")
-            style = "~~" if g["status"] == "completed" else ""
-            cols[1].markdown(f"{style}**{g['title']}**{style}{saving}")
-            cols[2].markdown(pill(g["metric"]), unsafe_allow_html=True)
-            if checked and g["status"] != "completed":
-                db.set_goal_status(g["id"], "completed")
-                done_now.append(g["id"])
-            elif not checked and g["status"] == "completed":
-                db.set_goal_status(g["id"], "active")
-        if done_now:
-            st.toast("Goal completed — nicely done.",
-                     icon=":material/check_circle:")
-            achievement_toast(ach_mod.evaluate_goal_completion(user["id"]))
-            st.rerun()
-        if not week_goals:
-            st.caption("No goals yet this week — add one below.")
-
-        # more opportunities, priority-ranked (§2) and dedupe-filtered
-        active = week_goals + [g for g in db.all_goals(user["id"])
-                               if g["status"] == "active"]
-        fresh = _ranked_opportunities(latest, r, n=3, active=active)
-        if fresh:
-            st.markdown("<div style='margin-top:.4rem;font-weight:700;"
-                        "color:#1B5E3B'>Top opportunities for you, ranked</div>",
-                        unsafe_allow_html=True)
-            for i, g in enumerate(fresh):
-                cc1, cc2 = st.columns([4.2, 1])
-                reason = g.get("reason") or "A practical step from your data."
-                saving = (f" · ~{g['expected_saving']:.0f} "
-                          f"{g['expected_saving_unit']}"
-                          if g.get("expected_saving") else "")
-                cc1.markdown(f"**{g['title']}**{saving}  \n"
-                             f"<span style='font-size:.82rem;color:#5c7069'>"
-                             f"{reason}</span>",
-                             unsafe_allow_html=True)
-                if cc2.button("Add", key=f"add_cand_{i}",
-                              use_container_width=True):
-                    added, skipped = db.save_goals(user["id"], [g])
-                    if added:
-                        st.toast("Added to this week's plan.",
-                                 icon=":material/check_circle:")
-                    else:
-                        st.toast("That's already in your plan.",
-                                 icon=":material/info:")
-                    st.rerun()
-
-    if st.session_state.pop("scroll_to_goals", False):
-        scroll_to_anchor("plan")
+    # Skip here when goals-first already rendered it at the top (no duplicate).
+    if not goals_first:
+        _render_plan(user, latest, r)
+        if st.session_state.pop("scroll_to_goals", False):
+            scroll_to_anchor("plan")
+    else:
+        st.session_state.pop("scroll_to_goals", None)
 
     # ================= achievements (§7) + transparency ====================
     head, side = st.columns([2.6, 1])

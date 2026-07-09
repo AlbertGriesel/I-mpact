@@ -33,8 +33,9 @@ def _clear_bill_values(data):
 
 
 def _upload_path(data):
-    from views.common import privacy_note
-    privacy_note("upload")
+    # Consent-critical provider warning stays inline (e.g. free-tier notice);
+    # the fuller "how your data is handled" detail moves to the section bottom
+    # so it doesn't dominate the task (brief §4/§13).
     note = ai.provider_privacy_note()
     if note:
         st.caption(note)
@@ -226,4 +227,10 @@ def render(data):
             "We have a swimming pool", "pool", data.get("swimming_pool"))
     st.caption("Garden and pool answers guide the assistant's advice — the app "
                "doesn't turn a yes/no into invented litres.")
+
+    # data-handling detail at the bottom of the section (brief §4/§13)
+    if mode == _UPLOAD:
+        from views.common import privacy_note
+        st.divider()
+        privacy_note("upload")
     return data

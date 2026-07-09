@@ -379,12 +379,22 @@ def test_location_country_alias():
     assert loc.canonical_country("Narnia") is None
 
 
-def test_location_valid_country_no_region_data():
-    # France is a recognised country but we hold no subdivisions for it
+def test_location_regions_from_iso_dataset():
+    # France's first-level regions now come from the comprehensive ISO 3166-2
+    # dataset (pycountry), so the region validates; we hold no municipality data
+    # for France, so that level stays empty rather than invented.
     assert loc.canonical_country("France") == "France"
-    assert loc.has_regions("France") is False
+    assert loc.has_regions("France") is True
     c, r, m = loc.resolve_location("France", "Ile-de-France", "Paris")
-    assert c == "France" and r == "" and m == ""
+    assert c == "France"
+    assert r == "Île-de-France"          # tolerant match, canonical accent
+    assert m == ""                        # no municipality data invented
+
+
+def test_location_iso_rejects_junk_region():
+    # A non-existent region for a real country resolves to empty, never guessed.
+    assert loc.canonical_region("Nigeria", "Atlantis") is None
+    assert loc.canonical_region("Nigeria", "Lagos") == "Lagos"
 
 
 def test_chat_rejects_arbitrary_municipality():

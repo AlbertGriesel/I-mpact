@@ -24,12 +24,22 @@ def _face(u, size=34, animate=False, halo=False, score=None):
     return av.svg(av.config_from_user(u), tier=env_tier(score), size=size,
                   animate=animate, halo=halo)
 
+def _fmt_improvement(v):
+    """Direction-aware, no double negatives (brief §14): a positive value is a
+    reduction (good), a negative value is an increase (worse)."""
+    if v >= 0:
+        return f"↓ {abs(v):.0f}% lower impact"
+    return f"↑ {abs(v):.0f}% higher impact"
+
+
 _RANKS = {
-    "Improvement": ("improvement", True, lambda v: f"−{v:.0f}%",
-                    "Net-carbon reduction since first assessment."),
-    "Impact score": ("score", True, lambda v: f"{v:.0f}/100",
-                     "Composite score vs labelled benchmarks — context, not a "
-                     "race; improvement is the fairest comparison."),
+    "Improvement": ("improvement", True, _fmt_improvement,
+                    "Net-carbon change since first assessment — higher "
+                    "reduction is better."),
+    "Impact score": ("score", True, lambda v: f"{v:.0f}",
+                     "Composite score vs labelled benchmarks (higher is "
+                     "better; 50 ≈ average, 100 = net zero). Context, not a "
+                     "race — improvement is the fairest comparison."),
     "Goal completion": ("goal_rate", True, lambda v: f"{v:.0f}%",
                         "Share of weekly goals completed."),
     "Streaks": ("streak", True, lambda v: f"{v:.0f}",
@@ -78,9 +88,9 @@ def _story_dialog(story, author):
     stats = story.get("stats") or {}
     if stats.get("electricity_reduction_percent"):
         st.markdown(pill(
-            f"Verified in-app: electricity "
-            f"−{stats['electricity_reduction_percent']}% "
-            f"({stats.get('from_kwh_month', '?')}→"
+            f"Verified in-app: electricity down "
+            f"{abs(stats['electricity_reduction_percent'])}% "
+            f"({stats.get('from_kwh_month', '?')} → "
             f"{stats.get('to_kwh_month', '?')} kWh/month)", "check"),
             unsafe_allow_html=True)
     if author["privacy"] != "public":
@@ -106,7 +116,7 @@ def _profile_dialog(row):
             st.markdown(score_ring(row["score"]), unsafe_allow_html=True)
         pills = []
         if row["improvement"] and row["improvement"] > 0:
-            pills.append(pill(f"−{row['improvement']:.0f}% carbon since "
+            pills.append(pill(f"{row['improvement']:.0f}% lower carbon since "
                               "joining", "trend-down"))
         if "streak" in fields and row["streak"] is not None:
             pills.append(pill(f"{row['streak']} streak", "flame"))

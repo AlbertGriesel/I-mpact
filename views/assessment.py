@@ -167,8 +167,66 @@ def _reset_assessment_session():
 
 def _go_to_step(step):
     st.session_state.wizard_step = step
-    st.session_state["_scroll_top"] = True
+    st.session_state["_scroll_top"] = True   # §6: next section loads at the top
     st.rerun()
+
+
+# --- empty-section confirmation (§12): ZERO and UNKNOWN are not the same ---
+# Personal wizard steps that map to a data section we can meaningfully check.
+_STEP_SECTION = {1: "water", 2: "electricity", 3: "transport"}
+_SECTION_LABEL = {"water": "water", "electricity": "electricity",
+                  "transport": "transport"}
+# Sections where a genuine zero is conceptually valid (a household can truly
+# have no transport; it cannot have literally zero water/electricity).
+_SECTION_ZERO_OK = {"transport"}
+
+
+def _section_empty(sec, data):
+    """True when the user left an entire section untouched (no answer at all)."""
+    d = data.get(sec, {})
+    if sec == "water":
+        return not (d.get("water_kl_month") or d.get("water_bill_rand")
+                    or d.get("shower_minutes") or d.get("uses_rainwater")
+                    or d.get("garden_irrigation") or d.get("swimming_pool"))
+    if sec == "electricity":
+        appliance = any(d.get(k) for k in ("electric_geyser", "air_conditioner",
+                        "electric_stove", "pool_pump"))
+        return not (d.get("kwh_month") or d.get("bill_rand") or appliance
+                    or d.get("renewable_source", "None") not in ("None", None)
+                    or d.get("backup_power", "None") not in ("None", None))
+    if sec == "transport":
+        v = d.get("vehicle", {})
+        pt = d.get("public_transport", {})
+        return not (v.get("owns_vehicle") or d.get("flights")
+                    or pt.get("type", "None") not in ("None", None)
+                    or d.get("fleet"))
+    return False
+
+
+@st.dialog("Nothing entered for this section")
+def _empty_section_dialog(sec, next_step):
+    label = _SECTION_LABEL.get(sec, sec)
+    data = st.session_state.assessment_data
+    st.markdown(f"You haven't entered any **{label}** information yet.")
+    st.caption("“Zero” and “skip” are recorded differently — a skipped section "
+               "is treated as unknown and estimated, never counted as zero.")
+    if sec in _SECTION_ZERO_OK:
+        if st.button(f"My {label} impact here is zero", type="primary",
+                     use_container_width=True, key="empty_zero"):
+            data.setdefault("section_status", {})[sec] = "zero"
+            st.session_state.assessment_data = data
+            st.session_state.pop("_empty_confirm", None)
+            _go_to_step(next_step)
+    if st.button("Skip for now — I don't know", use_container_width=True,
+                 key="empty_skip"):
+        data.setdefault("section_status", {})[sec] = "skipped"
+        st.session_state.assessment_data = data
+        st.session_state.pop("_empty_confirm", None)
+        _go_to_step(next_step)
+    if st.button("Go back and add information", use_container_width=True,
+                 key="empty_back"):
+        st.session_state.pop("_empty_confirm", None)
+        st.rerun()
 
 
 def _stepper(step, steps):
@@ -293,7 +351,21 @@ def render():
             with right:
                 if st.button("Next →", type="primary",
                              use_container_width=True, key="nav_next"):
-                    _go_to_step(step + 1)
+                    # §12: if a whole section is blank, confirm zero vs skip
+                    # before advancing — never silently treat blank as zero.
+                    sec = _STEP_SECTION.get(step) if acct != "business" else None
+                    if (sec and _section_empty(sec, data)
+                            and data.get("section_status", {}).get(sec) is None):
+                        st.session_state["_empty_confirm"] = (sec, step + 1)
+                        st.rerun()
+                    else:
+                        if sec:
+                            data.get("section_status", {}).pop(sec, None)
+                        _go_to_step(step + 1)
+
+    # §12: raise the confirmation dialog when a blank section was flagged above
+    if st.session_state.get("_empty_confirm"):
+        _empty_section_dialog(*st.session_state["_empty_confirm"])
 
 
 def _render_general(data):
